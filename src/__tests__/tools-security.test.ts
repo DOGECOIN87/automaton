@@ -17,10 +17,10 @@ import {
 } from "./mocks.js";
 import type { AutomatonDatabase, ToolContext, AutomatonTool, RiskLevel } from "../types.js";
 
-// Mock erc8004.js to avoid ABI parse error
-vi.mock("../registry/erc8004.js", () => ({
+// Mock solana-attestation.js to avoid network access at import time
+vi.mock("../registry/solana-attestation.js", () => ({
   queryAgent: vi.fn(),
-  getTotalAgents: vi.fn().mockResolvedValue(0),
+  discoverAttestations: vi.fn().mockResolvedValue([]),
   registerAgent: vi.fn(),
   leaveFeedback: vi.fn(),
 }));
@@ -86,7 +86,7 @@ describe("Tool Risk Level Classification", () => {
     install_skill: "dangerous",
     create_skill: "dangerous",
     remove_skill: "dangerous",
-    register_erc8004: "dangerous",
+    register_attestation: "dangerous",
     give_feedback: "dangerous",
     spawn_child: "dangerous",
     fund_child: "dangerous",

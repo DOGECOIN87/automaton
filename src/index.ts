@@ -60,7 +60,7 @@ Usage:
   automaton --configure    Edit configuration (providers, model, treasury, general)
   automaton --pick-model   Interactively pick the active inference model
   automaton --init         Initialize wallet and config directory
-  automaton --provision    Provision Conway API key via SIWE
+  automaton --provision    Provision Conway API key via SIWS
   automaton --status       Show current automaton status
   automaton --version      Show version
   automaton --help         Show this help

@@ -168,13 +168,34 @@ export function createConfig(params: {
 
 /**
  * Resolve the effective Solana RPC URL for this config.
+ *
+ * ALL Solana chain traffic goes through Matt's Helius API:
+ *   1. HELIUS_API_KEY env (highest precedence) ->
+ *      https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}
+ *   2. config.solanaRpcUrl / SOLANA_RPC_URL env (explicit override, dev use)
+ *   3. https://api.mainnet-beta.solana.com (last-resort dev fallback)
+ *
+ * The key is never hardcoded — it comes exclusively from the environment.
+ * See .env.example (HELIUS_API_KEY placeholder).
  */
 export function getSolanaRpcUrl(config?: Pick<AutomatonConfig, "solanaRpcUrl"> | null): string {
+  const heliusKey = process.env.HELIUS_API_KEY;
+  if (heliusKey) {
+    return `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
+  }
   return (
     config?.solanaRpcUrl ||
     process.env.SOLANA_RPC_URL ||
     "https://api.mainnet-beta.solana.com"
   );
+}
+
+/**
+ * Read the Helius API key from the environment (never hardcoded).
+ * Returns null when not set — callers must handle the unkeyed case.
+ */
+export function getHeliusApiKey(): string | null {
+  return process.env.HELIUS_API_KEY || null;
 }
 
 /**

@@ -8,13 +8,12 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-// Mock erc8004.js to avoid ABI parse error at import time
-vi.mock("../registry/erc8004.js", () => ({
+// Mock solana-attestation.js to avoid network access at import time
+vi.mock("../registry/solana-attestation.js", () => ({
   queryAgent: vi.fn(),
-  getTotalAgents: vi.fn().mockResolvedValue(0),
+  discoverAttestations: vi.fn().mockResolvedValue([]),
   registerAgent: vi.fn(),
   leaveFeedback: vi.fn(),
-  getRegisteredAgentsByEvents: vi.fn().mockResolvedValue([]),
 }));
 
 // Mock injection-defense.js to avoid import chain issues

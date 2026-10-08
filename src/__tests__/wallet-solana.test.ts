@@ -2,7 +2,7 @@
  * Tests for Solana Wallet Generation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { generateSolanaKeypair, getWalletChainType } from "../identity/wallet.js";
 import { isValidSolanaAddress } from "../identity/chain.js";
 import nacl from "tweetnacl";
@@ -52,23 +52,21 @@ describe("Solana Wallet", () => {
       expect(bs58.encode(kp.publicKey)).toBeTruthy();
     });
 
-    it("EVM wallet data backward compat (missing chainType defaults to evm)", () => {
-      const walletData = {
-        privateKey: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as `0x${string}`,
+    it("legacy EVM wallet data has no place in the Solana-only wallet file", () => {
+      // The WalletData type no longer carries an EVM privateKey field;
+      // wallet.ts throws a descriptive migration error if one is found.
+      const legacyWalletData = {
+        chainType: "solana" as const,
         createdAt: "2024-01-01T00:00:00.000Z",
       };
-
-      // No chainType field = defaults to "evm"
-      expect(walletData.chainType ?? "evm").toBe("evm");
+      expect(legacyWalletData.chainType).toBe("solana");
+      expect("privateKey" in legacyWalletData).toBe(false);
     });
   });
 
   describe("getWalletChainType", () => {
-    it("returns evm when no wallet exists", () => {
-      // Default when file doesn't exist is evm
-      const chainType = getWalletChainType();
-      // It should return "evm" even if the wallet file doesn't exist at the test path
-      expect(["evm", "solana"]).toContain(chainType);
+    it("is always solana", () => {
+      expect(getWalletChainType()).toBe("solana");
     });
   });
 });

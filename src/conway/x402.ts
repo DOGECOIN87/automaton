@@ -33,6 +33,7 @@ import {
 } from "@solana/web3.js";
 import { ResilientHttpClient } from "./http-client.js";
 import type { ChainIdentity } from "../identity/chain.js";
+import { getSolanaRpcUrl } from "../config.js";
 
 const x402HttpClient = new ResilientHttpClient();
 
@@ -49,12 +50,6 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
 export const SOLANA_NETWORKS = ["solana:mainnet", "solana"] as const;
 export type SolanaNetworkId = (typeof SOLANA_NETWORKS)[number];
 const CANONICAL_NETWORK: SolanaNetworkId = "solana:mainnet";
-
-function resolveRpcUrl(): string {
-  return (
-    process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com"
-  );
-}
 
 function resolveCommitment(): "confirmed" | "finalized" | "processed" {
   const c = process.env.SOLANA_COMMITMENT;
@@ -239,7 +234,7 @@ export async function getUsdcBalanceDetailed(
   _network: string = "solana:mainnet",
 ): Promise<UsdcBalanceResult> {
   try {
-    const connection = new Connection(resolveRpcUrl(), resolveCommitment());
+    const connection = new Connection(getSolanaRpcUrl(), resolveCommitment());
     const ownerPubkey = new PublicKey(address);
     const mintPubkey = new PublicKey(SOLANA_USDC_MINT);
 
@@ -352,7 +347,7 @@ export async function signSolanaPayment(
     throw new Error(`Unsupported x402 network for Solana: ${requirement.network}`);
   }
 
-  const conn = connection ?? new Connection(resolveRpcUrl(), resolveCommitment());
+  const conn = connection ?? new Connection(getSolanaRpcUrl(), resolveCommitment());
   const payer = new PublicKey(signer.address);
   const payTo = new PublicKey(requirement.payTo);
   const mint = new PublicKey(requirement.asset);

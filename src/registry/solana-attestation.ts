@@ -48,6 +48,7 @@ import type {
   DiscoveredAgent,
   AutomatonDatabase,
 } from "../types.js";
+import { getSolanaRpcUrl } from "../config.js";
 
 const logger = createLogger("registry.attestation");
 
@@ -59,21 +60,17 @@ export const FEEDBACK_MEMO_TYPE = "conway-agent-feedback";
 
 export const SOLANA_CHAIN_ID = "solana:mainnet";
 
-function resolveRpcUrl(rpcUrl?: string): string {
-  return (
-    rpcUrl ||
-    process.env.SOLANA_RPC_URL ||
-    "https://api.mainnet-beta.solana.com"
-  );
-}
-
-function resolveCommitment(): "confirmed" | "finalized" | "processed" {
+// Note: some read methods (getSignaturesForAddress, getParsedTransaction)
+// type their commitment as Finality ("confirmed" | "finalized"), so
+// "processed" is mapped to "confirmed" here.
+function resolveCommitment(): "confirmed" | "finalized" {
   const c = process.env.SOLANA_COMMITMENT;
-  return c === "finalized" || c === "processed" ? c : "confirmed";
+  return c === "finalized" ? "finalized" : "confirmed";
 }
 
 function getConnection(rpcUrl?: string): Connection {
-  return new Connection(resolveRpcUrl(rpcUrl), resolveCommitment());
+  // All chain traffic routes through Helius when HELIUS_API_KEY is set.
+  return new Connection(rpcUrl || getSolanaRpcUrl(), resolveCommitment());
 }
 
 // ─── Memo construction / parsing (pure, offline-testable) ───────
@@ -123,7 +120,7 @@ export async function buildAttestationMemo(
   identity: ChainIdentity,
   params: { name: string; cardHash: string; agentUri: string; timestamp?: string },
 ): Promise<AttestationMemo> {
-  const unsigned = {
+  const unsigned: Omit<AttestationMemo, "signature"> = {
     type: ATTESTATION_MEMO_TYPE,
     name: params.name,
     wallet: identity.address,
@@ -190,7 +187,7 @@ export async function buildFeedbackMemo(
   if (params.comment.length > 500) {
     throw new Error(`Comment too long: ${params.comment.length} chars (max 500).`);
   }
-  const unsigned = {
+  const unsigned: Omit<FeedbackMemo, "signature"> = {
     type: FEEDBACK_MEMO_TYPE,
     fromWallet: identity.address,
     targetAgentId: params.targetAgentId,

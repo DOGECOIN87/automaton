@@ -1,13 +1,17 @@
 /**
- * Social & Registry Hardening Tests (Phase 3.2)
+ * Social & Registry Hardening Tests (Phase 3.2) — Solana
  *
- * Tests for signing, validation, social client, agent card,
- * ERC-8004 fixes, discovery caching, and schema migration.
+ * Tests for Ed25519 signing, validation, social client, agent card,
+ * attestation memos, discovery caching, and schema migration.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
+import crypto from "crypto";
 import { MIGRATION_V7 } from "../state/schema.js";
+import { SolanaChainIdentity } from "../identity/chain.js";
 
 // ─── Test helpers ───────────────────────────────────────────────
 
@@ -40,82 +44,83 @@ function createTestDb(): import("better-sqlite3").Database {
   return db;
 }
 
+function makeIdentity(): SolanaChainIdentity {
+  return new SolanaChainIdentity(nacl.sign.keyPair().secretKey);
+}
+
+function randomAddress(): string {
+  return bs58.encode(nacl.sign.keyPair().publicKey);
+}
+
 // ─── 1. Signing Tests ───────────────────────────────────────────
 
 describe("Signing", () => {
   it("signSendPayload produces valid payload with signature", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
     const { signSendPayload } = await import("../social/signing.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
+    const identity = makeIdentity();
+    const to = randomAddress();
+    const payload = await signSendPayload(identity, to, "Hello, world!");
 
-    const payload = await signSendPayload(
-      account,
-      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "Hello, world!",
-    );
-
-    expect(payload.from).toBe(account.address.toLowerCase());
-    expect(payload.to).toBe("0x70997970c51812dc3a010c7d01b50e0d17dc79c8");
+    expect(payload.from).toBe(identity.address);
+    expect(payload.to).toBe(to);
     expect(payload.content).toBe("Hello, world!");
     expect(payload.signature).toBeTruthy();
-    expect(payload.signature).toMatch(/^0x/);
+    // Ed25519 signatures are base58, not 0x hex
+    expect(payload.signature).not.toMatch(/^0x/);
+    expect(bs58.decode(payload.signature).length).toBe(64);
     expect(payload.signed_at).toBeTruthy();
   });
 
-  it("signSendPayload enforces content size limit", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
+  it("signSendPayload preserves address case (no lowercasing)", async () => {
     const { signSendPayload } = await import("../social/signing.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
+    const identity = makeIdentity();
+    const to = "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy";
+    const payload = await signSendPayload(identity, to, "Hi");
 
+    expect(payload.to).toBe(to);
+    expect(payload.from).toBe(identity.address);
+  });
+
+  it("signSendPayload enforces content size limit", async () => {
+    const { signSendPayload } = await import("../social/signing.js");
+
+    const identity = makeIdentity();
     const longContent = "x".repeat(65_000);
     await expect(
-      signSendPayload(account, "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", longContent),
+      signSendPayload(identity, randomAddress(), longContent),
     ).rejects.toThrow("Message content too long");
   });
 
   it("signPollPayload produces valid payload", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
     const { signPollPayload } = await import("../social/signing.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
+    const identity = makeIdentity();
+    const result = await signPollPayload(identity);
 
-    const result = await signPollPayload(account);
-
-    expect(result.address).toBe(account.address.toLowerCase());
-    expect(result.signature).toMatch(/^0x/);
+    expect(result.address).toBe(identity.address);
+    expect(bs58.decode(result.signature).length).toBe(64);
     expect(result.timestamp).toBeTruthy();
   });
 
-  it("signSendPayload canonical format matches runtime and CLI expectation", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const { keccak256, toBytes, verifyMessage } = await import("viem");
+  it("signSendPayload canonical format verifies with Ed25519", async () => {
     const { signSendPayload } = await import("../social/signing.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
-
-    const to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+    const identity = makeIdentity();
+    const to = randomAddress();
     const content = "Test message";
-    const payload = await signSendPayload(account, to, content);
+    const payload = await signSendPayload(identity, to, content);
 
-    // Reconstruct canonical and verify
-    const contentHash = keccak256(toBytes(content));
-    const canonical = `Conway:send:${to.toLowerCase()}:${contentHash}:${payload.signed_at}`;
+    // Reconstruct canonical and verify with nacl directly
+    const contentHash = crypto.createHash("sha256").update(content, "utf8").digest("hex");
+    const canonical = `Conway:send:${to}:${contentHash}:${payload.signed_at}`;
 
-    const valid = await verifyMessage({
-      address: account.address,
-      message: canonical,
-      signature: payload.signature as `0x${string}`,
-    });
+    const valid = nacl.sign.detached.verify(
+      new TextEncoder().encode(canonical),
+      bs58.decode(payload.signature),
+      bs58.decode(identity.address),
+    );
 
     expect(valid).toBe(true);
   });
@@ -128,8 +133,8 @@ describe("Message Validation", () => {
     const { validateMessage } = await import("../social/validation.js");
 
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "Hello!",
       signed_at: new Date().toISOString(),
     });
@@ -142,8 +147,8 @@ describe("Message Validation", () => {
     const { validateMessage } = await import("../social/validation.js");
 
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "x".repeat(129_000),
     });
 
@@ -155,8 +160,8 @@ describe("Message Validation", () => {
     const { validateMessage } = await import("../social/validation.js");
 
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "x".repeat(65_000),
     });
 
@@ -169,8 +174,8 @@ describe("Message Validation", () => {
 
     const oldTimestamp = new Date(Date.now() - 6 * 60_000).toISOString();
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "Hello!",
       signed_at: oldTimestamp,
     });
@@ -184,8 +189,8 @@ describe("Message Validation", () => {
 
     const futureTimestamp = new Date(Date.now() + 2 * 60_000).toISOString();
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "Hello!",
       signed_at: futureTimestamp,
     });
@@ -198,8 +203,8 @@ describe("Message Validation", () => {
     const { validateMessage } = await import("../social/validation.js");
 
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      from: randomAddress(),
+      to: randomAddress(),
       content: "Hello!",
       signed_at: "not-a-valid-date",
     });
@@ -213,7 +218,20 @@ describe("Message Validation", () => {
 
     const result = validateMessage({
       from: "not-an-address",
-      to: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      to: randomAddress(),
+      content: "Hello!",
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("Invalid sender address"))).toBe(true);
+  });
+
+  it("EVM-style 0x address is not a valid Solana address", async () => {
+    const { validateMessage } = await import("../social/validation.js");
+
+    const result = validateMessage({
+      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      to: randomAddress(),
       content: "Hello!",
     });
 
@@ -225,7 +243,7 @@ describe("Message Validation", () => {
     const { validateMessage } = await import("../social/validation.js");
 
     const result = validateMessage({
-      from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      from: randomAddress(),
       to: "bad",
       content: "Hello!",
     });
@@ -261,22 +279,14 @@ describe("Relay URL Validation", () => {
 describe("Social Client", () => {
   it("createSocialClient throws on HTTP relay URL", async () => {
     const { createSocialClient } = await import("../social/client.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
 
-    expect(() => createSocialClient("http://relay.example.com", account)).toThrow(
+    expect(() => createSocialClient("http://relay.example.com", makeIdentity())).toThrow(
       "Relay URL must use HTTPS",
     );
   });
 
   it("send() calls signing module and validates message", async () => {
     const { createSocialClient } = await import("../social/client.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
 
     // Mock fetch to capture the request body
     const mockFetch = vi.fn().mockResolvedValue({
@@ -285,11 +295,10 @@ describe("Social Client", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const client = createSocialClient("https://relay.example.com", account);
-    const result = await client.send(
-      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "Test message",
-    );
+    const identity = makeIdentity();
+    const client = createSocialClient("https://relay.example.com", identity);
+    const to = randomAddress();
+    const result = await client.send(to, "Test message");
 
     expect(result.id).toBe("msg-123");
     // Verify the request was made with a signature
@@ -297,16 +306,14 @@ describe("Social Client", () => {
     const body = JSON.parse(callArgs?.[1]?.body as string);
     expect(body.signature).toBeTruthy();
     expect(body.signed_at).toBeTruthy();
+    expect(body.from).toBe(identity.address);
+    expect(body.to).toBe(to);
 
     vi.unstubAllGlobals();
   });
 
   it("unreadCount() throws on HTTP error (not returns 0)", async () => {
     const { createSocialClient } = await import("../social/client.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -316,7 +323,7 @@ describe("Social Client", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const client = createSocialClient("https://relay.example.com", account);
+    const client = createSocialClient("https://relay.example.com", makeIdentity());
     await expect(client.unreadCount()).rejects.toThrow("Unread count failed");
 
     vi.unstubAllGlobals();
@@ -324,10 +331,6 @@ describe("Social Client", () => {
 
   it("rate limiting: 101st message in hour is rejected", async () => {
     const { createSocialClient } = await import("../social/client.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -335,30 +338,24 @@ describe("Social Client", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const client = createSocialClient("https://relay.example.com", account);
+    const client = createSocialClient("https://relay.example.com", makeIdentity());
+    const to = randomAddress();
 
     // Send 100 messages successfully
     for (let i = 0; i < 100; i++) {
-      await client.send(
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        `message ${i}`,
-      );
+      await client.send(to, `message ${i}`);
     }
 
     // 101st should be rejected
-    await expect(
-      client.send("0x70997970C51812dc3A010C7d01b50e0d17dc79C8", "message 100"),
-    ).rejects.toThrow("Rate limit exceeded");
+    await expect(client.send(to, "message 100")).rejects.toThrow(
+      "Rate limit exceeded",
+    );
 
     vi.unstubAllGlobals();
   });
 
   it("rate limiting: failed sends count toward the hourly limit", async () => {
     const { createSocialClient } = await import("../social/client.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
 
     // Server returns 500 for every request
     const mockFetch = vi.fn().mockResolvedValue({
@@ -369,19 +366,18 @@ describe("Social Client", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const client = createSocialClient("https://relay.example.com", account);
+    const client = createSocialClient("https://relay.example.com", makeIdentity());
+    const to = randomAddress();
 
     // Send 100 messages that all fail with 500
     for (let i = 0; i < 100; i++) {
-      await client
-        .send("0x70997970C51812dc3A010C7d01b50e0d17dc79C8", `msg ${i}`)
-        .catch(() => {}); // ignore the send failure
+      await client.send(to, `msg ${i}`).catch(() => {}); // ignore the send failure
     }
 
     // 101st should be rate-limited even though all previous sends failed
-    await expect(
-      client.send("0x70997970C51812dc3A010C7d01b50e0d17dc79C8", "msg 100"),
-    ).rejects.toThrow("Rate limit exceeded");
+    await expect(client.send(to, "msg 100")).rejects.toThrow(
+      "Rate limit exceeded",
+    );
 
     vi.unstubAllGlobals();
   });
@@ -390,14 +386,12 @@ describe("Social Client", () => {
 // ─── 5. Agent Card Tests ────────────────────────────────────────
 
 describe("Agent Card", () => {
-  it("generateAgentCard does NOT include sandbox ID", async () => {
-    const { generateAgentCard } = await import("../registry/agent-card.js");
-
+  function makeCardFixtures() {
     const identity = {
       name: "test-agent",
-      address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as `0x${string}`,
+      address: randomAddress(),
       account: {} as any,
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
+      creatorAddress: randomAddress(),
       sandboxId: "sandbox-123",
       apiKey: "key-123",
       createdAt: new Date().toISOString(),
@@ -406,7 +400,7 @@ describe("Agent Card", () => {
     const config = {
       name: "TestBot",
       conwayApiUrl: "https://api.conway.tech",
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
+      creatorAddress: identity.creatorAddress,
     } as any;
 
     const db = {
@@ -414,70 +408,39 @@ describe("Agent Card", () => {
       getSkills: () => [],
     } as any;
 
-    const card = generateAgentCard(identity, config, db);
-    const cardStr = JSON.stringify(card);
+    return { identity, config, db };
+  }
 
-    expect(cardStr).not.toContain("sandbox-123");
+  it("generateAgentCard does NOT include sandbox ID", async () => {
+    const { generateAgentCard } = await import("../registry/agent-card.js");
+    const { identity, config, db } = makeCardFixtures();
+
+    const card = generateAgentCard(identity, config, db);
+    expect(JSON.stringify(card)).not.toContain("sandbox-123");
   });
 
   it("generateAgentCard does NOT include Conway API URL", async () => {
     const { generateAgentCard } = await import("../registry/agent-card.js");
-
-    const identity = {
-      name: "test-agent",
-      address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as `0x${string}`,
-      account: {} as any,
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
-      sandboxId: "sandbox-123",
-      apiKey: "key-123",
-      createdAt: new Date().toISOString(),
-    };
-
-    const config = {
-      name: "TestBot",
-      conwayApiUrl: "https://api.conway.tech",
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
-    } as any;
-
-    const db = {
-      getChildren: () => [],
-      getSkills: () => [],
-    } as any;
+    const { identity, config, db } = makeCardFixtures();
 
     const card = generateAgentCard(identity, config, db);
-    const cardStr = JSON.stringify(card);
-
-    expect(cardStr).not.toContain("api.conway.tech");
+    expect(JSON.stringify(card)).not.toContain("api.conway.tech");
   });
 
   it("generateAgentCard does NOT include creator address", async () => {
     const { generateAgentCard } = await import("../registry/agent-card.js");
-
-    const identity = {
-      name: "test-agent",
-      address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as `0x${string}`,
-      account: {} as any,
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
-      sandboxId: "sandbox-123",
-      apiKey: "key-123",
-      createdAt: new Date().toISOString(),
-    };
-
-    const config = {
-      name: "TestBot",
-      conwayApiUrl: "https://api.conway.tech",
-      creatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
-    } as any;
-
-    const db = {
-      getChildren: () => [],
-      getSkills: () => [],
-    } as any;
+    const { identity, config, db } = makeCardFixtures();
 
     const card = generateAgentCard(identity, config, db);
-    const cardStr = JSON.stringify(card);
+    expect(JSON.stringify(card)).not.toContain(identity.creatorAddress);
+  });
 
-    expect(cardStr).not.toContain("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  it("generateAgentCard uses a solana:mainnet wallet endpoint", async () => {
+    const { generateAgentCard } = await import("../registry/agent-card.js");
+    const { identity, config, db } = makeCardFixtures();
+
+    const card = generateAgentCard(identity, config, db);
+    expect(card.services[0].endpoint).toBe(`solana:mainnet:${identity.address}`);
   });
 
   it("hostAgentCard writes card as separate JSON file", async () => {
@@ -515,50 +478,47 @@ describe("Agent Card", () => {
   });
 });
 
-// ─── 6. ERC-8004 Tests ─────────────────────────────────────────
+// ─── 6. Attestation Feedback Tests ──────────────────────────────
 
-describe("ERC-8004", () => {
-  it("leaveFeedback rejects score 0", async () => {
-    const { leaveFeedback } = await import("../registry/erc8004.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
-
-    const mockDb = { raw: createTestDb() } as any;
+describe("Attestation feedback validation", () => {
+  it("buildFeedbackMemo rejects score 0", async () => {
+    const { buildFeedbackMemo } = await import("../registry/solana-attestation.js");
 
     await expect(
-      leaveFeedback(account, "1", 0, "bad", "testnet", mockDb),
+      buildFeedbackMemo(makeIdentity(), { targetAgentId: "att1", score: 0, comment: "bad" }),
     ).rejects.toThrow("Invalid score: 0");
   });
 
-  it("leaveFeedback rejects score 6", async () => {
-    const { leaveFeedback } = await import("../registry/erc8004.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
-
-    const mockDb = { raw: createTestDb() } as any;
+  it("buildFeedbackMemo rejects score 6", async () => {
+    const { buildFeedbackMemo } = await import("../registry/solana-attestation.js");
 
     await expect(
-      leaveFeedback(account, "1", 6, "too high", "testnet", mockDb),
+      buildFeedbackMemo(makeIdentity(), { targetAgentId: "att1", score: 6, comment: "too high" }),
     ).rejects.toThrow("Invalid score: 6");
   });
 
-  it("leaveFeedback rejects comment over 500 chars", async () => {
-    const { leaveFeedback } = await import("../registry/erc8004.js");
-    const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
+  it("buildFeedbackMemo rejects comment over 500 chars", async () => {
+    const { buildFeedbackMemo } = await import("../registry/solana-attestation.js");
 
-    const mockDb = { raw: createTestDb() } as any;
     const longComment = "x".repeat(501);
-
     await expect(
-      leaveFeedback(account, "1", 3, longComment, "testnet", mockDb),
+      buildFeedbackMemo(makeIdentity(), { targetAgentId: "att1", score: 3, comment: longComment }),
     ).rejects.toThrow("Comment too long");
+  });
+
+  it("buildFeedbackMemo produces a verifiable memo", async () => {
+    const { buildFeedbackMemo } = await import("../registry/solana-attestation.js");
+
+    const identity = makeIdentity();
+    const memo = await buildFeedbackMemo(identity, {
+      targetAgentId: "att1",
+      score: 5,
+      comment: "great agent",
+    });
+
+    expect(memo.type).toBe("conway-agent-feedback");
+    expect(memo.fromWallet).toBe(identity.address);
+    expect(bs58.decode(memo.signature).length).toBe(64);
   });
 });
 
@@ -593,14 +553,14 @@ describe("Discovery", () => {
     expect(result).toBeNull();
   });
 
-  it("validateAgentCard accepts valid card", async () => {
+  it("validateAgentCard accepts valid card with Solana endpoint", async () => {
     const { validateAgentCard } = await import("../registry/discovery.js");
 
     const result = validateAgentCard({
       name: "TestAgent",
       type: "test",
       description: "A test agent",
-      services: [{ name: "wallet", endpoint: "eip155:8453:0x123" }],
+      services: [{ name: "wallet", endpoint: `solana:mainnet:${randomAddress()}` }],
     });
     expect(result).not.toBeNull();
     expect(result!.name).toBe("TestAgent");
@@ -636,10 +596,10 @@ describe("Schema", () => {
     );
     expect(() =>
       stmt.run(
-        "0xtest",
+        "testagent1",
         '{"name":"test"}',
         "https://example.com",
-        "0xhash",
+        "deadbeef",
         null,
         1,
         new Date().toISOString(),
@@ -650,7 +610,7 @@ describe("Schema", () => {
     // Verify we can read it back
     const row = db
       .prepare("SELECT * FROM discovered_agents_cache WHERE agent_address = ?")
-      .get("0xtest") as any;
+      .get("testagent1") as any;
     expect(row).toBeTruthy();
     expect(row.agent_card).toBe('{"name":"test"}');
 
@@ -665,14 +625,14 @@ describe("Schema", () => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     expect(() =>
-      stmt.run("id1", "0xhash", "eip155:8453", "register", "pending", null, "{}"),
+      stmt.run("id1", "txhash1", "solana:mainnet", "attest", "pending", null, "{}"),
     ).not.toThrow();
 
     const row = db
       .prepare("SELECT * FROM onchain_transactions WHERE tx_hash = ?")
-      .get("0xhash") as any;
+      .get("txhash1") as any;
     expect(row).toBeTruthy();
-    expect(row.operation).toBe("register");
+    expect(row.operation).toBe("attest");
     expect(row.status).toBe("pending");
 
     db.close();
@@ -700,7 +660,7 @@ describe("Schema", () => {
        VALUES (?, ?, ?, ?, ?)`,
     );
     expect(() =>
-      stmt.run("id2", "0xhash2", "eip155:8453", "register", "invalid_status"),
+      stmt.run("id2", "txhash2", "solana:mainnet", "attest", "invalid_status"),
     ).toThrow();
 
     db.close();
@@ -715,17 +675,17 @@ describe("DB Helpers", () => {
     const { agentCacheUpsert, agentCacheGet } = await import("../state/database.js");
 
     agentCacheUpsert(db, {
-      agentAddress: "0xtest",
+      agentAddress: "testagent1",
       agentCard: '{"name":"TestAgent"}',
       fetchedFrom: "https://example.com/card",
-      cardHash: "0xhash",
+      cardHash: "deadbeef",
       validUntil: new Date(Date.now() + 3_600_000).toISOString(),
       fetchCount: 1,
       lastFetchedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     });
 
-    const row = agentCacheGet(db, "0xtest");
+    const row = agentCacheGet(db, "testagent1");
     expect(row).toBeTruthy();
     expect(row!.agentCard).toBe('{"name":"TestAgent"}');
     expect(row!.fetchCount).toBe(1);
@@ -739,10 +699,10 @@ describe("DB Helpers", () => {
 
     // Valid entry
     agentCacheUpsert(db, {
-      agentAddress: "0xvalid",
+      agentAddress: "validagent",
       agentCard: '{"name":"Valid"}',
       fetchedFrom: "https://example.com",
-      cardHash: "0x1",
+      cardHash: "aa",
       validUntil: new Date(Date.now() + 3_600_000).toISOString(),
       fetchCount: 1,
       lastFetchedAt: new Date().toISOString(),
@@ -751,10 +711,10 @@ describe("DB Helpers", () => {
 
     // Expired entry
     agentCacheUpsert(db, {
-      agentAddress: "0xexpired",
+      agentAddress: "expiredagent",
       agentCard: '{"name":"Expired"}',
       fetchedFrom: "https://example.com",
-      cardHash: "0x2",
+      cardHash: "bb",
       validUntil: "2020-01-01T00:00:00Z",
       fetchCount: 1,
       lastFetchedAt: new Date().toISOString(),
@@ -763,7 +723,7 @@ describe("DB Helpers", () => {
 
     const valid = agentCacheGetValid(db);
     expect(valid.length).toBe(1);
-    expect(valid[0]!.agentAddress).toBe("0xvalid");
+    expect(valid[0]!.agentAddress).toBe("validagent");
 
     db.close();
   });
@@ -773,10 +733,10 @@ describe("DB Helpers", () => {
     const { agentCacheUpsert, agentCachePrune, agentCacheGet } = await import("../state/database.js");
 
     agentCacheUpsert(db, {
-      agentAddress: "0xexpired",
+      agentAddress: "expiredagent",
       agentCard: '{"name":"Expired"}',
       fetchedFrom: "https://example.com",
-      cardHash: "0x1",
+      cardHash: "aa",
       validUntil: "2020-01-01T00:00:00Z",
       fetchCount: 1,
       lastFetchedAt: new Date().toISOString(),
@@ -785,7 +745,7 @@ describe("DB Helpers", () => {
 
     const pruned = agentCachePrune(db);
     expect(pruned).toBe(1);
-    expect(agentCacheGet(db, "0xexpired")).toBeUndefined();
+    expect(agentCacheGet(db, "expiredagent")).toBeUndefined();
 
     db.close();
   });
@@ -796,18 +756,18 @@ describe("DB Helpers", () => {
 
     onchainTxInsert(db, {
       id: "tx1",
-      txHash: "0xabc",
-      chain: "eip155:8453",
-      operation: "register",
+      txHash: "sigabc",
+      chain: "solana:mainnet",
+      operation: "attest",
       status: "pending",
       gasUsed: null,
       metadata: "{}",
       createdAt: new Date().toISOString(),
     });
 
-    const row = onchainTxGetByHash(db, "0xabc");
+    const row = onchainTxGetByHash(db, "sigabc");
     expect(row).toBeTruthy();
-    expect(row!.operation).toBe("register");
+    expect(row!.operation).toBe("attest");
     expect(row!.status).toBe("pending");
 
     db.close();
@@ -819,9 +779,9 @@ describe("DB Helpers", () => {
 
     onchainTxInsert(db, {
       id: "tx1",
-      txHash: "0x1",
-      chain: "eip155:8453",
-      operation: "register",
+      txHash: "sig1",
+      chain: "solana:mainnet",
+      operation: "attest",
       status: "pending",
       gasUsed: null,
       metadata: "{}",
@@ -830,8 +790,8 @@ describe("DB Helpers", () => {
 
     onchainTxInsert(db, {
       id: "tx2",
-      txHash: "0x2",
-      chain: "eip155:8453",
+      txHash: "sig2",
+      chain: "solana:mainnet",
       operation: "feedback",
       status: "confirmed",
       gasUsed: 50000,
@@ -854,18 +814,18 @@ describe("DB Helpers", () => {
 
     onchainTxInsert(db, {
       id: "tx1",
-      txHash: "0xupdate",
-      chain: "eip155:8453",
-      operation: "register",
+      txHash: "sigupdate",
+      chain: "solana:mainnet",
+      operation: "attest",
       status: "pending",
       gasUsed: null,
       metadata: "{}",
       createdAt: new Date().toISOString(),
     });
 
-    onchainTxUpdateStatus(db, "0xupdate", "confirmed", 75000);
+    onchainTxUpdateStatus(db, "sigupdate", "confirmed", 75000);
 
-    const row = onchainTxGetByHash(db, "0xupdate");
+    const row = onchainTxGetByHash(db, "sigupdate");
     expect(row!.status).toBe("confirmed");
     expect(row!.gasUsed).toBe(75000);
 
@@ -892,43 +852,38 @@ describe("Protocol", () => {
   });
 
   it("verifyMessageSignature validates correct signature", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
     const { signSendPayload } = await import("../social/signing.js");
     const { verifyMessageSignature } = await import("../social/protocol.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
+    const identity = makeIdentity();
+    const payload = await signSendPayload(identity, randomAddress(), "Test content");
 
-    const payload = await signSendPayload(
-      account,
-      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "Test content",
-    );
-
-    const valid = await verifyMessageSignature(payload, account.address);
+    const valid = await verifyMessageSignature(payload, identity.address);
     expect(valid).toBe(true);
   });
 
   it("verifyMessageSignature rejects wrong signer", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
     const { signSendPayload } = await import("../social/signing.js");
     const { verifyMessageSignature } = await import("../social/protocol.js");
 
-    const account = privateKeyToAccount(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    );
-
-    const payload = await signSendPayload(
-      account,
-      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "Test content",
-    );
+    const identity = makeIdentity();
+    const payload = await signSendPayload(identity, randomAddress(), "Test content");
 
     // Different address
+    const valid = await verifyMessageSignature(payload, randomAddress());
+    expect(valid).toBe(false);
+  });
+
+  it("verifyMessageSignature rejects tampered content", async () => {
+    const { signSendPayload } = await import("../social/signing.js");
+    const { verifyMessageSignature } = await import("../social/protocol.js");
+
+    const identity = makeIdentity();
+    const payload = await signSendPayload(identity, randomAddress(), "Test content");
+
     const valid = await verifyMessageSignature(
-      payload,
-      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      { ...payload, content: "Tampered content" },
+      identity.address,
     );
     expect(valid).toBe(false);
   });
@@ -937,23 +892,23 @@ describe("Protocol", () => {
 // ─── 11. Address Validation Tests ───────────────────────────────
 
 describe("Address Validation", () => {
-  it("isValidAddress accepts valid address", async () => {
+  it("isValidAddress accepts a valid Solana address", async () => {
     const { isValidAddress } = await import("../social/validation.js");
-    expect(isValidAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")).toBe(true);
+    expect(isValidAddress(randomAddress())).toBe(true);
   });
 
   it("isValidAddress rejects short address", async () => {
     const { isValidAddress } = await import("../social/validation.js");
-    expect(isValidAddress("0x7099")).toBe(false);
+    expect(isValidAddress("short")).toBe(false);
   });
 
-  it("isValidAddress rejects non-hex", async () => {
+  it("isValidAddress rejects EVM-style 0x addresses", async () => {
     const { isValidAddress } = await import("../social/validation.js");
-    expect(isValidAddress("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG")).toBe(false);
+    expect(isValidAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")).toBe(false);
   });
 
-  it("isValidAddress rejects no prefix", async () => {
+  it("isValidAddress rejects garbage", async () => {
     const { isValidAddress } = await import("../social/validation.js");
-    expect(isValidAddress("70997970C51812dc3A010C7d01b50e0d17dc79C8")).toBe(false);
+    expect(isValidAddress("not-an-address!!!")).toBe(false);
   });
 });

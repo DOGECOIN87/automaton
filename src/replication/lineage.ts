@@ -4,7 +4,7 @@
  * Track parent-child relationships between automatons.
  * The parent records children in SQLite.
  * Children record their parent in config.
- * ERC-8004 registration includes parentAgent field.
+ * Attestation memos include the parent wallet as the attesting signer lineage.
  *
  * Phase 3.1: Actual pruning + concurrency-limited refresh.
  */

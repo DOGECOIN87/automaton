@@ -42,45 +42,29 @@ vi.mock("fs", async (importOriginal) => {
 
 // ─── isValidWalletAddress ─────────────────────────────────────
 
-describe("isValidWalletAddress", () => {
-  it("accepts a valid 40-hex-char address with 0x prefix", () => {
-    expect(isValidWalletAddress("0xabcdef1234567890abcdef1234567890abcdef12")).toBe(true);
+describe("isValidWalletAddress (Solana-only)", () => {
+  it("accepts a valid base58 Solana address", () => {
+    expect(isValidWalletAddress("68Uss1ALyiecHSNr6Mh3YTegVsKj4Behq5pBYZmS7mVp")).toBe(true);
   });
 
-  it("accepts uppercase hex characters", () => {
-    expect(isValidWalletAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")).toBe(true);
+  it("accepts the system program address (all-ones)", () => {
+    expect(isValidWalletAddress("11111111111111111111111111111111")).toBe(true);
   });
 
-  it("accepts mixed-case hex characters", () => {
-    expect(isValidWalletAddress("0xAbCdEf1234567890aBcDeF1234567890AbCdEf12")).toBe(true);
-  });
-
-  it("rejects the zero address", () => {
-    expect(isValidWalletAddress("0x" + "0".repeat(40))).toBe(false);
-  });
-
-  it("rejects addresses without 0x prefix", () => {
-    expect(isValidWalletAddress("abcdef1234567890abcdef1234567890abcdef12")).toBe(false);
+  it("rejects EVM-style 0x addresses", () => {
+    expect(isValidWalletAddress("0xabcdef1234567890abcdef1234567890abcdef12")).toBe(false);
   });
 
   it("rejects addresses that are too short", () => {
-    expect(isValidWalletAddress("0xabcdef")).toBe(false);
-  });
-
-  it("rejects addresses that are too long", () => {
-    expect(isValidWalletAddress("0x" + "a".repeat(42))).toBe(false);
+    expect(isValidWalletAddress("abc")).toBe(false);
   });
 
   it("rejects empty string", () => {
     expect(isValidWalletAddress("")).toBe(false);
   });
 
-  it("rejects non-hex characters", () => {
-    expect(isValidWalletAddress("0xGGGGGG1234567890abcdef1234567890abcdef12")).toBe(false);
-  });
-
-  it("rejects 0x prefix alone", () => {
-    expect(isValidWalletAddress("0x")).toBe(false);
+  it("rejects non-base58 characters", () => {
+    expect(isValidWalletAddress("0OIl" + "a".repeat(40))).toBe(false);
   });
 });
 
@@ -98,8 +82,9 @@ describe("spawnChild", () => {
     parentAddress: identity.address,
   };
 
-  const validAddress = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
-  const zeroAddress = "0x" + "0".repeat(40);
+  const validAddress = "68Uss1ALyiecHSNr6Mh3YTegVsKj4Behq5pBYZmS7mVp";
+  // Solana has no "zero address": use a non-base58 string for the invalid case
+  const invalidAddress = "not-a-valid-wallet-address";
 
   beforeEach(() => {
     conway = new MockConwayClient();
@@ -125,10 +110,10 @@ describe("spawnChild", () => {
     expect(child.status).toBe("spawning");
   });
 
-  it("throws on zero address from init", async () => {
+  it("throws on invalid address from init", async () => {
     vi.spyOn(conway, "exec").mockImplementation(async (command: string) => {
       if (command.includes("--init")) {
-        return { stdout: `Wallet: ${zeroAddress}`, stderr: "", exitCode: 0 };
+        return { stdout: `Wallet: ${invalidAddress}`, stderr: "", exitCode: 0 };
       }
       return { stdout: "ok", stderr: "", exitCode: 0 };
     });
@@ -167,7 +152,7 @@ describe("spawnChild", () => {
 
     vi.spyOn(conway, "exec").mockImplementation(async (command: string) => {
       if (command.includes("--init")) {
-        return { stdout: `Wallet: ${zeroAddress}`, stderr: "", exitCode: 0 };
+        return { stdout: `Wallet: ${invalidAddress}`, stderr: "", exitCode: 0 };
       }
       return { stdout: "ok", stderr: "", exitCode: 0 };
     });

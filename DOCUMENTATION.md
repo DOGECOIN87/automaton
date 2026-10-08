@@ -1195,4 +1195,13 @@ Yes, the agent can use `update_genesis_prompt`, but it requires a justification 
 
 **What chains does the wallet support?**
 
-Solana only. The automaton uses Solana mainnet for USDC-SPL payments and attestation memos. Configure the RPC endpoint with `SOLANA_RPC_URL` (default: https://api.mainnet-beta.solana.com) and commitment with `SOLANA_COMMITMENT` (default: confirmed).
+Solana only. The automaton uses Solana mainnet for USDC-SPL payments and attestation memos.
+
+**How is Solana RPC configured?**
+
+All Solana chain traffic goes through Matt's Helius API. Resolution order:
+1. `HELIUS_API_KEY` env — when set, the runtime uses `https://mainnet.helius-rpc.com/?api-key=<key>` (see `.env.example`).
+2. `SOLANA_RPC_URL` env (or `solanaRpcUrl` in automaton.json) — explicit override for dev use.
+3. `https://api.mainnet-beta.solana.com` — last-resort dev fallback.
+
+Commitment via `SOLANA_COMMITMENT` (default: confirmed). For richer chain data (token metadata, holder lists, transaction history), code should use the Helius surfaces in `src/solana/helius.ts` (DAS API on mainnet.helius-rpc.com, REST on api.helius.xyz) — keyed exclusively via `HELIUS_API_KEY`, never hardcoded.

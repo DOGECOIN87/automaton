@@ -58,8 +58,7 @@ export async function buildTickContext(
   let usdcBalance = 0;
   if (walletAddress) {
     try {
-      const network = chainType === "solana" ? "solana:mainnet" : "eip155:8453";
-      usdcBalance = await getUsdcBalance(walletAddress, network, chainType as any);
+      usdcBalance = await getUsdcBalance(walletAddress, "solana:mainnet");
     } catch (err: any) {
       logger.error("Failed to fetch USDC balance", err instanceof Error ? err : undefined);
     }

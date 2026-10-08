@@ -823,7 +823,7 @@ describe("MIGRATION_V7", () => {
     const stmt = db.prepare(
       "INSERT INTO onchain_transactions (id, tx_hash, chain, operation, status) VALUES (?, ?, ?, ?, ?)",
     );
-    expect(() => stmt.run("tx-1", "0xhash", "eip155:8453", "register", "pending")).not.toThrow();
+    expect(() => stmt.run("tx-1", "0xhash", "solana:mainnet", "register", "pending")).not.toThrow();
 
     db.close();
   });

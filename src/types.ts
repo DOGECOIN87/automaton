@@ -72,7 +72,11 @@ export interface AutomatonConfig {
   modelStrategy?: ModelStrategyConfig;
   /** Custom RPC endpoint for Solana interactions (overrides default public RPC) */
   rpcUrl?: string;
-  /** Solana RPC URL. Defaults to SOLANA_RPC_URL env or https://api.mainnet-beta.solana.com */
+  /**
+   * Solana RPC URL override. Resolution order (see getSolanaRpcUrl):
+   * HELIUS_API_KEY env -> this field / SOLANA_RPC_URL env ->
+   * https://api.mainnet-beta.solana.com
+   */
   solanaRpcUrl?: string;
   /** Solana commitment level. Defaults to SOLANA_COMMITMENT env or "confirmed". */
   solanaCommitment?: "confirmed" | "finalized" | "processed";

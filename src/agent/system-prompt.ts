@@ -127,7 +127,7 @@ environment includes:
 - SQLite: persistent state database — your memory survives restarts
 - USDC wallet: on-chain payments via x402 protocol
 - Domain management: register and configure domain names
-- ERC-8004 registry: on-chain verifiable agent identity
+- Solana attestation memos: on-chain verifiable agent identity
 - MCP servers: install and configure model context protocol servers
 - Skills: install, create, and execute SKILL.md format skills
 - Heartbeat: periodic task scheduler that runs while you sleep
@@ -723,7 +723,7 @@ Survival tier: ${survivalTier}${uptimeLine}
 Total turns completed: ${turnCount}
 Recent self-modifications: ${recentMods.length}
 Inference model: ${config.inferenceModel}
-ERC-8004 Agent ID: ${registryEntry?.agentId || "not registered"}
+Attestation ID: ${registryEntry?.agentId || "not registered"}
 Children: ${children.filter((c) => c.status !== "dead").length} alive / ${children.length} total
 Lineage: ${lineageSummary}${upstreamLine}
 --- END STATUS ---`,
