@@ -7,6 +7,7 @@
  */
 
 import type { MetricEntry, MetricSnapshot, MetricType } from "../types.js";
+import { safeEmit } from "./event-bus.js";
 
 function labelKey(name: string, labels?: Record<string, string>): string {
   if (!labels || Object.keys(labels).length === 0) return name;
@@ -138,7 +139,9 @@ export class MetricsCollector {
       }
     } catch { /* never throw */ }
 
-    return { counters, gauges, histograms };
+    const snapshot = { counters, gauges, histograms };
+    safeEmit({ type: "metrics.sample", counters: Object.fromEntries(counters), gauges: Object.fromEntries(gauges), histograms: Object.fromEntries(histograms) });
+    return snapshot;
   }
 
   reset(): void {

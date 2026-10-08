@@ -19,6 +19,7 @@ import type {
 } from "../types.js";
 import { insertPolicyDecision } from "../state/database.js";
 import type { PolicyDecisionRow } from "../state/database.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 export class PolicyEngine {
   private db: Database.Database;
@@ -115,6 +116,7 @@ export class PolicyEngine {
     } catch {
       // Don't let logging failures block tool execution
     }
+    safeEmit({ type: "policy.decision", toolName: decision.toolName, action: decision.action, reasonCode: decision.reasonCode, humanMessage: decision.humanMessage, rulesTriggered: decision.rulesTriggered });
   }
 
   /**

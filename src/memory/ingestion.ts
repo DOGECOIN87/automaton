@@ -23,6 +23,7 @@ import {
   type KnowledgeEntry,
 } from "./knowledge-store.js";
 import { createLogger } from "../observability/logger.js";
+import { safeEmit } from "../observability/event-bus.js";
 const logger = createLogger("memory.ingestion");
 
 type Database = BetterSqlite3.Database;
@@ -126,6 +127,7 @@ export class MemoryIngestionPipeline {
 
       // 6. Enhanced ingestion: market signals + knowledge updates
       this.ingestKnowledgeEnhancements(sessionId, toolCallResults);
+      safeEmit({ type: "memory.written", sessionId, turnId: turn.id, classification, entriesWritten: toolCallResults.length });
     } catch (error) {
       logger.error("Ingestion failed", error instanceof Error ? error : undefined);
       // Never throw -- memory failure must not block the agent loop

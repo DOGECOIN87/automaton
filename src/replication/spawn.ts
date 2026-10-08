@@ -43,6 +43,7 @@ import {
 } from "@solana/web3.js";
 import { getWallet } from "../identity/wallet.js";
 import { createLogger } from "../observability/logger.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 const logger = createLogger("replication.spawn");
 
@@ -340,6 +341,7 @@ export async function spawnChild(
       description: `Spawned child: ${genesis.name} in sandbox ${sandbox.id}${reusedSandbox ? " (reused)" : ""}`,
       reversible: false,
     });
+    safeEmit({ type: "replication.child_spawned", childId, name: genesis.name, address: childWallet, sandboxId: sandbox.id });
 
     // If we reused a sandbox, update the old children record to 'cleaned_up'
     // so it doesn't get reused again.
@@ -470,6 +472,7 @@ async function spawnChildLegacy(
       description: `Spawned child: ${genesis.name} in sandbox ${sandbox.id}`,
       reversible: false,
     });
+    safeEmit({ type: "replication.child_spawned", childId, name: genesis.name, address: childWallet, sandboxId: sandbox.id });
 
     return child;
   } catch (error) {

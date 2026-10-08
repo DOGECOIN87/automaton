@@ -65,6 +65,7 @@ import { createWorkerInferenceBridge } from "./worker-inference-bridge.js";
 import { ProviderRegistry } from "../inference/provider-registry.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { isIdleOnlyTool } from "./idle-only-tools.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
@@ -634,8 +635,12 @@ export async function runAgentLoop(
         costCents: routerResult.costCents,
       };
 
+      safeEmit({ type: "loop.turn.started", turnId: turn.id, inputSource: currentInput?.source, agentState: db.getAgentState() });
+      safeEmit({ type: "loop.turn.thinking", turnId: turn.id, thinkingSummary: (response.message.content || "").slice(0, 500), model: inference.getDefaultModel(), promptTokens: response.usage.promptTokens, completionTokens: response.usage.completionTokens });
+
       // ── Execute Tool Calls ──
       if (response.toolCalls && response.toolCalls.length > 0) {
+        safeEmit({ type: "loop.turn.acting", turnId: turn.id, toolCallCount: response.toolCalls.length, toolNames: response.toolCalls.map((tc: any) => tc.function.name) });
         const toolCallMessages: any[] = [];
         let callCount = 0;
         const currentInputSource = currentInput?.source as InputSource | undefined;
@@ -695,6 +700,7 @@ export async function runAgentLoop(
         }
       });
       onTurnComplete?.(turn);
+      safeEmit({ type: "loop.turn.observed", turnId: turn.id, toolCallCount: turn.toolCalls.length, errors: turn.toolCalls.filter((tc) => tc.error).length, tokenUsage: turn.tokenUsage.totalTokens, agentState: db.getAgentState() });
 
       // Phase 2.2: Post-turn memory ingestion (non-blocking)
       try {
@@ -838,7 +844,7 @@ export async function runAgentLoop(
         "create_skill", "remove_skill", "install_skill_from_git",
         "install_skill_from_url", "pull_upstream", "git_commit", "git_push",
         "git_branch", "git_clone", "send_message", "message_child",
-        "register_domain", "register_erc8004", "give_feedback",
+        "register_domain", "register_attestation", "give_feedback",
         "update_genesis_prompt", "update_agent_card", "modify_heartbeat",
         "expose_port", "remove_port", "x402_fetch", "manage_dns",
         "distress_signal", "prune_dead_children", "sleep",

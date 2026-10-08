@@ -13,6 +13,7 @@ import type {
   SurvivalTier,
 } from "../types.js";
 import { formatCredits } from "../conway/credits.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 export interface FundingAttempt {
   strategy: string;
@@ -89,6 +90,7 @@ export async function executeFundingStrategies(
   history.push(...attempts);
   if (history.length > 100) history.splice(0, history.length - 100);
   db.setKV("funding_attempts", JSON.stringify(history));
+  for (const attempt of attempts) { safeEmit({ type: "funding.topup", strategy: attempt.strategy, success: attempt.success, details: attempt.details }); }
 
   return attempts;
 }

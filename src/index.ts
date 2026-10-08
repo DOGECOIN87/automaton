@@ -56,6 +56,8 @@ Sovereign AI Agent Runtime
 
 Usage:
   automaton --run          Start the automaton (first run triggers setup wizard)
+  automaton --run --gui    Also start the GUI dashboard (default port 3417, --gui-port=N to change)
+  automaton --gui          Serve the GUI dashboard only (no agent loop)
   automaton --setup        Re-run the interactive setup wizard
   automaton --configure    Edit configuration (providers, model, treasury, general)
   automaton --pick-model   Interactively pick the active inference model
@@ -130,7 +132,15 @@ Environment:
 
   if (args.includes("--run")) {
     StructuredLogger.setSink(prettySink);
-    await run();
+    await run(args);
+    return;
+  }
+
+  if (args.includes("--gui")) {
+    const { startGuiStandalone } = await import("./gui/bootstrap.js");
+    await startGuiStandalone(args);
+    // Keep the process alive serving the dashboard.
+    await new Promise(() => {});
     return;
   }
 
@@ -182,7 +192,7 @@ Version:    ${config.version}
 
 // ─── Main Run ──────────────────────────────────────────────────
 
-async function run(): Promise<void> {
+async function run(args: string[]): Promise<void> {
   logger.info(`[${new Date().toISOString()}] Conway Automaton v${VERSION} starting...`);
 
   // Load config — first run triggers interactive setup wizard
@@ -384,6 +394,28 @@ async function run(): Promise<void> {
 
   heartbeat.start();
   logger.info(`[${new Date().toISOString()}] Heartbeat daemon started.`);
+
+  // Optional GUI dashboard: `automaton --run --gui [--gui-port=N]`
+  if (args.includes("--gui")) {
+    try {
+      const { startGuiServer, resolveGuiPort } = await import("./gui/server.js");
+      const { createLiveProvider } = await import("./gui/bootstrap.js");
+      const { createBuiltinTools, loadInstalledTools } = await import("./agent/tools.js");
+      const port = resolveGuiPort(args);
+      await startGuiServer({
+        port,
+        provider: createLiveProvider({
+          identity,
+          config,
+          db,
+          tools: [...createBuiltinTools(identity.sandboxId), ...loadInstalledTools(db)],
+        }),
+      });
+      logger.info(`[${new Date().toISOString()}] GUI dashboard: http://127.0.0.1:${port}`);
+    } catch (err: any) {
+      logger.warn(`[${new Date().toISOString()}] GUI server failed to start: ${err?.message ?? err}`);
+    }
+  }
 
   // Handle graceful shutdown
   const shutdown = () => {

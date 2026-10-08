@@ -8,6 +8,7 @@
 
 import type { LogLevel, LogEntry } from "../types.js";
 import { LOG_LEVEL_PRIORITY } from "../types.js";
+import { safeEmit } from "./event-bus.js";
 
 let globalLogLevel: LogLevel = "info";
 let customSink: ((entry: LogEntry) => void) | null = null;
@@ -93,6 +94,8 @@ export class StructuredLogger {
           entry.error.code = (error as any).code;
         }
       }
+
+      safeEmit({ type: "log.line", level, module: this.module, message, error: error ? error.message : undefined });
 
       if (customSink) {
         customSink(entry);

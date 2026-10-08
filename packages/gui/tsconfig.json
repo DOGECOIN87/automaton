@@ -1,0 +1,1 @@
+{"compilerOptions":{"jsx":"react-jsx","module":"ESNext","moduleResolution":"Bundler","noEmit":true,"rootDir":"src","types":["vite/client"]},"extends":"../../tsconfig.json","include":["src/**/*"]}

@@ -26,6 +26,7 @@ import { DurableScheduler } from "./scheduler.js";
 import { upsertHeartbeatSchedule } from "../state/database.js";
 import type BetterSqlite3 from "better-sqlite3";
 import { createLogger } from "../observability/logger.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 const logger = createLogger("heartbeat");
 
@@ -117,6 +118,7 @@ export function createHeartbeatDaemon(
     if (!running) return;
     timeoutId = setTimeout(async () => {
       try {
+        safeEmit({ type: "heartbeat.tick", tickIntervalMs: tickMs });
         await scheduler.tick();
       } catch (err: any) {
         logger.error("Tick failed", err instanceof Error ? err : undefined);

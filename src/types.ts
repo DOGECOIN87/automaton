@@ -775,7 +775,7 @@ export interface GitLogEntry {
   date: string;
 }
 
-// ─── ERC-8004 Registry ─────────────────────────────────────────
+// ─── On-Chain Attestation Registry (Solana-native) ───────────────────
 
 export interface AgentCard {
   type: string;

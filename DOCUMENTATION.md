@@ -614,8 +614,8 @@ The treasury policy enforces spending limits at the policy engine level. Every f
 
 The x402 payment protocol enables the automaton to pay for services with USDC. When a server responds with HTTP 402, the automaton:
 1. Parses payment requirements from the response
-2. Signs a USDC `TransferWithAuthorization` (EIP-3009, gasless)
-3. Retries the request with an `X-Payment` header
+2. Builds and signs a USDC-SPL transfer transaction from its Solana wallet (no gasless meta-transaction; the wallet pays Solana fees)
+3. Retries the request with an `X-Payment` header carrying the base64 signed transaction
 4. The payment is settled on-chain via the x402 facilitator
 
 ### Credit topup tiers

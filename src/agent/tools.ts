@@ -22,6 +22,7 @@ import type {
 import type { PolicyEngine } from "./policy-engine.js";
 import { sanitizeToolResult, sanitizeInput } from "./injection-defense.js";
 import { createLogger } from "../observability/logger.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 const logger = createLogger("tools");
 
@@ -3261,6 +3262,7 @@ export async function executeTool(
   const startTime = Date.now();
 
   if (!tool) {
+    safeEmit({ type: "tool.failed", toolName, argsSummary: JSON.stringify(args).slice(0, 500), error: `Unknown tool: ${toolName}`, latencyMs: 0 });
     return {
       id: ulid(),
       name: toolName,
@@ -3271,6 +3273,7 @@ export async function executeTool(
     };
   }
 
+  safeEmit({ type: "tool.called", toolName, argsSummary: JSON.stringify(args).slice(0, 500) });
   // Policy evaluation (if engine is provided)
   if (policyEngine && turnContext) {
     const request: PolicyRequest = {
@@ -3346,6 +3349,8 @@ export async function executeTool(
       }
     }
 
+    const durationMs = Date.now() - startTime;
+    safeEmit({ type: "tool.succeeded", toolName, argsSummary: JSON.stringify(args).slice(0, 500), resultSummary: String(result).slice(0, 500), latencyMs: durationMs });
     return {
       id: ulid(),
       name: toolName,
@@ -3354,6 +3359,8 @@ export async function executeTool(
       durationMs: Date.now() - startTime,
     };
   } catch (err: any) {
+    const failedMs = Date.now() - startTime;
+    safeEmit({ type: "tool.failed", toolName, argsSummary: JSON.stringify(args).slice(0, 500), error: err.message || String(err), latencyMs: failedMs });
     return {
       id: ulid(),
       name: toolName,

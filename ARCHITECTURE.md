@@ -325,7 +325,7 @@ The automaton has **57 built-in tools** organized into 10 categories:
 | **financial** | 2 | `transfer_credits`, `x402_fetch` |
 | **skills** | 4 | `install_skill`, `list_skills`, `create_skill`, `remove_skill` |
 | **git** | 7 | `git_status`, `git_diff`, `git_commit`, `git_log`, `git_push`, `git_branch`, `git_clone` |
-| **registry** | 5 | `register_erc8004`, `update_agent_card`, `discover_agents`, `give_feedback`, `check_reputation` |
+| **registry** | 5 | `register_attestation`, `update_agent_card`, `discover_agents`, `give_feedback`, `check_reputation` |
 | **replication** | 9 | `spawn_child`, `list_children`, `fund_child`, `check_child_status`, `start_child`, `message_child`, `verify_child_constitution`, `prune_dead_children`, `send_message` |
 | **memory** | 13 | `update_soul`, `reflect_on_soul`, `view_soul`, `view_soul_history`, `remember_fact`, `recall_facts`, `set_goal`, `complete_goal`, `save_procedure`, `recall_procedure`, `note_about_agent`, `review_memory`, `forget` |
 
@@ -483,7 +483,7 @@ The automaton's survival depends on two balances:
 
 **Credit topup** (`src/conway/topup.ts`): The agent buys credits from USDC via the x402 payment protocol. On startup, `bootstrapTopup()` buys the minimum $5 tier. At runtime, the agent uses `topup_credits` tool to choose larger tiers ($5/$25/$100/$500/$1000/$2500).
 
-**x402 protocol** (`src/conway/x402.ts`): HTTP 402 payment flow. Server returns payment requirements, client signs a USDC `TransferWithAuthorization` (EIP-3009), retries with `X-Payment` header.
+**x402 protocol** (`src/conway/x402.ts`): HTTP 402 payment flow, Solana-native. Server returns payment requirements, client builds and signs a USDC-SPL transfer transaction (mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) from its Solana wallet and retries with the `X-Payment` header carrying the base64 signed transaction. Recent-blockhash expiry replaces EIP-3009's `requiredDeadlineSeconds`; the x402 facilitator settles the signed transaction on Solana.
 
 **Treasury policy** (`TreasuryPolicy` in config): Configurable caps on transfers, x402 payments, inference spend, with hourly/daily windows enforced by the policy engine.
 

@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import { getSurvivalTier, formatCredits } from "../conway/credits.js";
 import { getUsdcBalance } from "../conway/x402.js";
+import { safeEmit } from "../observability/event-bus.js";
 
 export interface ResourceStatus {
   financial: FinancialState;
@@ -66,6 +67,8 @@ export async function checkResources(
 
   // Store current tier
   db.setKV("current_tier", tier);
+  safeEmit({ type: "wallet.balance", address: identity.address, creditsCents, usdcBalance });
+  if (tierChanged) { safeEmit({ type: "survival.tier_changed", previousTier, tier, creditsCents }); }
 
   // Store financial state
   db.setKV("financial_state", JSON.stringify(financial));
