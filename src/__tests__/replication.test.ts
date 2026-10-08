@@ -20,6 +20,27 @@ import {
 } from "./mocks.js";
 import type { AutomatonDatabase, GenesisConfig } from "../types.js";
 import { MIGRATION_V7 } from "../state/schema.js";
+import { checkFundingWalletSufficient } from "../solana/funding-wallet.js";
+
+// Mock the funding wallet module — no real RPC or keys in tests.
+vi.mock("../solana/funding-wallet.js", () => ({
+  checkFundingWalletSufficient: vi.fn(async () => ({
+    ok: true,
+    balanceLamports: 1_000_000_000,
+    requiredLamports: 50_010_000,
+    childFundSol: 0.05,
+    message: "ok",
+  })),
+  fundChildFromFundingWallet: vi.fn(async () => "fund-sig-test"),
+  getChildFundSol: () => 0.05,
+  getChildFundLamports: () => 50_000_000,
+  loadFundingWallet: () => ({
+    keypair: {},
+    address: "FundWalletTest111111111111111111111111111111",
+  }),
+  DEFAULT_CHILD_FUND_SOL: 0.05,
+  FUNDING_FEE_BUFFER_LAMPORTS: 10_000,
+}));
 
 // Mock fs for constitution propagation
 vi.mock("fs", async (importOriginal) => {
@@ -132,6 +153,19 @@ describe("spawnChild", () => {
 
     await expect(spawnChild(conway, identity, db, genesis))
       .rejects.toThrow("Child wallet address invalid");
+  });
+
+  it("refuses to spawn when the funding wallet cannot cover a child", async () => {
+    vi.mocked(checkFundingWalletSufficient).mockResolvedValueOnce({
+      ok: false,
+      balanceLamports: 0,
+      requiredLamports: 50_010_000,
+      childFundSol: 0.05,
+      message: "Funding wallet holds 0.000000 SOL — needs 0.050010 SOL.",
+    });
+
+    await expect(spawnChild(conway, identity, db, genesis))
+      .rejects.toThrow('Cannot spawn child "test-child"');
   });
 
   it("propagates error on exec failure without calling deleteSandbox", async () => {

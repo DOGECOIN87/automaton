@@ -11,3 +11,7 @@ dist
 .automaton/wallet.json
 .automaton/state.db
 
+
+# Funding wallet keypair — NEVER commit. Generated during deploy prep;
+# imported at deploy time via file mount or FUNDING_WALLET_SECRET env.
+deploy/funding-wallet.json

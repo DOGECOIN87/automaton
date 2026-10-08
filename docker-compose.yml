@@ -26,6 +26,10 @@ services:
       - "${GUI_PORT:-8787}:8787"
     volumes:
       - automaton-data:/data
+      # Funding wallet keypair (generated during deploy prep, 0600, gitignored).
+      # Mounted read-only; the runtime signs child-funding transfers with it.
+      # Alternative: set FUNDING_WALLET_SECRET in .env instead of this mount.
+      - ./deploy/funding-wallet.json:/app/deploy/funding-wallet.json:ro
     # Required for the interactive setup wizard on first boot:
     #   docker compose run --rm automaton node dist/index.js --setup
     # then start detached:

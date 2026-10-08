@@ -36,6 +36,7 @@ import { isValidAddress } from "../identity/chain.js";
 import type { ChainType } from "../identity/chain.js";
 import {
   Connection,
+  LAMPORTS_PER_SOL,
   PublicKey,
   Transaction,
   TransactionInstruction,
@@ -44,6 +45,12 @@ import {
 import { getWallet } from "../identity/wallet.js";
 import { createLogger } from "../observability/logger.js";
 import { safeEmit } from "../observability/event-bus.js";
+import {
+  checkFundingWalletSufficient,
+  fundChildFromFundingWallet,
+  getChildFundSol,
+  loadFundingWallet,
+} from "../solana/funding-wallet.js";
 
 const logger = createLogger("replication.spawn");
 
@@ -77,6 +84,33 @@ export interface ChildFunding {
   solLamports?: number;
   /** Base units of USDC-SPL to send (6 decimals). */
   usdcBaseUnits?: number;
+}
+
+/**
+ * Funding gate: refuse to spawn when the dedicated funding wallet is missing
+ * or cannot cover one child's SOL allocation (CHILD_FUND_SOL) plus the fee
+ * buffer. Logs clearly, emits a GUI-visible event, and throws.
+ *
+ * Runs BEFORE any sandbox is created so a refusal never spends Conway
+ * resources.
+ */
+export async function assertSpawnFunded(childName: string): Promise<void> {
+  const check = await checkFundingWalletSufficient(1);
+  if (!check.ok) {
+    const fundingWallet = loadFundingWallet();
+    logger.error(`SPAWN REFUSED for child "${childName}": ${check.message}`);
+    safeEmit({
+      type: "replication.spawn_refused",
+      childName,
+      reason: check.message,
+      fundingWalletAddress: fundingWallet?.address ?? null,
+      fundingWalletBalanceSol: check.balanceLamports / LAMPORTS_PER_SOL,
+    });
+    throw new Error(`Cannot spawn child "${childName}": ${check.message}`);
+  }
+  logger.info(
+    `Funding gate passed for child "${childName}": ${check.childFundSol} SOL per child from funding wallet.`,
+  );
 }
 
 function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
@@ -217,6 +251,10 @@ export async function spawnChild(
     );
   }
 
+  // Funding gate: the dedicated funding wallet must cover one child's SOL
+  // allocation before we spend anything on a sandbox. Refuses loudly.
+  await assertSpawnFunded(genesis.name);
+
   const childId = ulid();
   let sandboxId: string | undefined;
   let reusedSandbox: { id: string } | null = null;
@@ -323,7 +361,17 @@ export async function spawnChild(
       `wallet ${childWallet} verified`,
     );
 
-    // Optional on-chain funding of the child wallet (SOL and/or USDC-SPL)
+    // Mandatory on-chain funding: each child gets CHILD_FUND_SOL (default
+    // 0.05) SOL from Matt's dedicated funding wallet — never from the
+    // agent's own wallet. The funding gate above already verified sufficiency.
+    const fundTx = await fundChildFromFundingWallet(childWallet);
+    lifecycle.transition(
+      childId,
+      "funded",
+      `child wallet funded ${getChildFundSol()} SOL from funding wallet: ${fundTx}`,
+    );
+
+    // Legacy explicit funding option (parent wallet) — kept for compat.
     if (options?.funding) {
       const fundingTxs = await fundChildWallet(childWallet, options.funding);
       lifecycle.transition(
@@ -400,6 +448,9 @@ async function spawnChildLegacy(
 
   const legacyTier = selectSandboxTier(childMemoryMb);
 
+  // Funding gate (same as the lifecycle path): refuse before spending anything.
+  await assertSpawnFunded(genesis.name);
+
   try {
     const sandbox = await conway.createSandbox({
       name: `automaton-child-${genesis.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
@@ -449,6 +500,12 @@ async function spawnChildLegacy(
     if (!isValidWalletAddress(childWallet, "solana")) {
       throw new Error(`Child wallet address invalid: ${childWallet}`);
     }
+
+    // Mandatory funding from the dedicated funding wallet (CHILD_FUND_SOL).
+    const legacyFundTx = await fundChildFromFundingWallet(childWallet);
+    logger.info(
+      `Legacy spawn: child ${genesis.name} funded ${getChildFundSol()} SOL from funding wallet: ${legacyFundTx}`,
+    );
 
     const child: ChildAutomaton = {
       id: childId,

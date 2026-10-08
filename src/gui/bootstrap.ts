@@ -36,7 +36,7 @@ export function createLiveProvider(opts: {
 }): GuiDataProvider {
   const { identity, config, db, tools } = opts;
 
-  const getState = () => {
+  const getState = async () => {
     const financialStr = db.getKV("financial_state");
     let financial: unknown = null;
     try {
@@ -46,6 +46,27 @@ export function createLiveProvider(opts: {
     }
     const byCategory: Record<string, number> = {};
     for (const t of tools) byCategory[t.category] = (byCategory[t.category] ?? 0) + 1;
+
+    // Dedicated child-funding wallet (address + live SOL balance, shown prominently in the GUI).
+    let fundingWallet: { address: string; childFundSol: number; solBalance: number | null } | null = null;
+    try {
+      const { loadFundingWallet, getChildFundSol, getFundingWalletBalanceLamports } =
+        await import("../solana/funding-wallet.js");
+      const { LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+      const fw = loadFundingWallet();
+      if (fw) {
+        let solBalance: number | null = null;
+        try {
+          solBalance = (await getFundingWalletBalanceLamports(fw.address)) / LAMPORTS_PER_SOL;
+        } catch {
+          solBalance = null; // RPC unreachable — GUI shows "unknown" instead of failing
+        }
+        fundingWallet = { address: fw.address, childFundSol: getChildFundSol(), solBalance };
+      }
+    } catch {
+      fundingWallet = null;
+    }
+
     return {
       source: "live",
       name: config.name,
@@ -56,6 +77,7 @@ export function createLiveProvider(opts: {
       turnCount: db.getTurnCount(),
       tier: db.getKV("current_tier"),
       financial,
+      fundingWallet,
       startedAt: db.getKV("start_time"),
       toolsSummary: { total: tools.length, byCategory },
       heartbeat: {

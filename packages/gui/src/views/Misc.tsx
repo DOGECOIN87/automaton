@@ -27,6 +27,7 @@ export function MemoryView({ events }: { events: BusEvent[] }) {
 
 export function ReplicationView({ state, events }: { state: RuntimeState | null; events: BusEvent[] }) {
   const spawns = byType(events, "replication.child_spawned").slice(-30).reverse();
+  const refusals = byType(events, "replication.spawn_refused").slice(-30).reverse();
   const children = state?.children ?? [];
   return (
     <div>
@@ -65,6 +66,25 @@ export function ReplicationView({ state, events }: { state: RuntimeState | null;
                   <td className="mono">{String(e.name)}</td>
                   <td className="mono">{truncate(String(e.address), 8)}</td>
                   <td className="mono">{truncate(String(e.sandboxId), 8)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <h2>Refused spawns <span className="muted">(session)</span></h2>
+        {refusals.length === 0 ? (
+          <div className="note">No refused spawns in this session.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Time</th><th>Child</th><th>Reason</th></tr></thead>
+            <tbody>
+              {refusals.map((e) => (
+                <tr key={e.seq}>
+                  <td className="mono">{fmtTime(e.timestamp)}</td>
+                  <td className="mono">{String(e.childName)}</td>
+                  <td>{String(e.reason)}</td>
                 </tr>
               ))}
             </tbody>

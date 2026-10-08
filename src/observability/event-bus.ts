@@ -125,6 +125,15 @@ export interface ReplicationChildSpawnedEvent extends BusEventBase {
   sandboxId: string;
 }
 
+/** Emitted when a spawn is refused (e.g. funding wallet missing/insufficient). */
+export interface ReplicationSpawnRefusedEvent extends BusEventBase {
+  type: "replication.spawn_refused";
+  childName: string;
+  reason: string;
+  fundingWalletAddress?: string | null;
+  fundingWalletBalanceSol?: number;
+}
+
 /** Policy events */
 export interface PolicyDecisionEvent extends BusEventBase {
   type: "policy.decision";
@@ -167,6 +176,7 @@ export type BusEvent =
   | FundingTopupEvent
   | MemoryWrittenEvent
   | ReplicationChildSpawnedEvent
+  | ReplicationSpawnRefusedEvent
   | PolicyDecisionEvent
   | LogLineEvent
   | MetricsSampleEvent;

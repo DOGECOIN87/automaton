@@ -66,7 +66,46 @@ docker run --rm -v automaton-data:/data alpine \
   sh -c 'cp /data/wallet.json /data/wallet.json.bak && chmod 600 /data/wallet.json.bak'
 ```
 
-## 5. Fund the wallet (small amount only)
+## 5. Fund the funding wallet (REQUIRED before any spawn)
+
+This is the dedicated wallet Matt funds personally. Every spawned child agent
+receives `CHILD_FUND_SOL` (default 0.05) SOL from it. **Spawning is refused**
+until this wallet exists and holds enough for at least one child allocation.
+
+**Funding wallet address (generated during deploy prep):**
+
+```
+BP1Umo5jLtpRgyYHzHgne7WJiLRmPYHpJ5tX1MUQjsEE
+```
+
+1. Send SOL to the address above — enough for the children you plan to spawn
+   (e.g. 1 SOL ≈ 20 children at the default 0.05 allocation). A few dollars is
+   plenty for the first run.
+2. Confirm the balance: the setup wizard's step 7 shows the live balance, and
+   the GUI Overview page has a prominent **Child funding wallet** banner
+   (address + live balance + funded/INSUFFICIENT status).
+3. Only proceed when the GUI shows **funded**. If a spawn is attempted while
+   unfunded, the runtime refuses loudly (log line + `replication.spawn_refused`
+   event, visible in the GUI Replication tab) — before any sandbox is created,
+   so no Conway spend is wasted.
+
+**Importing the keypair into the deployment** — the key lives in
+`deploy/funding-wallet.json` (0600, gitignored, never committed). Two options:
+
+- **File mount (default, docker-compose):** `./deploy/funding-wallet.json` is
+  mounted read-only at `/app/deploy/funding-wallet.json`; set
+  `FUNDING_WALLET_PATH=/app/deploy/funding-wallet.json` in `.env`.
+- **Secret env var (hosted envs):** set
+  `FUNDING_WALLET_SECRET='[1,2,3,...]'` (the secret-key JSON array) or the
+  base58-encoded secret key. Takes precedence over the file.
+
+⚠️ **Key-custody warning:** this keypair controls real SOL. It is used only to
+sign child-funding transfers and never leaves the runtime process, but anyone
+with the file or the env var can drain it. Keep `deploy/funding-wallet.json`
+off git (already gitignored), back it up to encrypted storage, and never paste
+it into chat, logs, or screenshots.
+
+## 6. Fund the agent wallet (small amount only)
 
 1. Get the address: `docker compose run --rm automaton node dist/index.js --status`
    (or read it from the GUI Overview page after starting).
@@ -75,7 +114,7 @@ docker run --rm -v automaton-data:/data alpine \
 3. The automaton buys Conway credits itself via x402 USDC-SPL when it needs them
    (`topup_credits` tool / bootstrap top-up). Watch the first top-up in the GUI.
 
-## 6. Start the runtime + GUI
+## 7. Start the runtime + GUI
 
 ```bash
 docker compose up -d
@@ -103,7 +142,7 @@ node dist/index.js --run --gui --gui-port 8787
 pnpm gui
 ```
 
-## 7. Rollback
+## 8. Rollback
 
 - **Stop everything:** `docker compose down` (the `automaton-data` volume with
   wallet + SQLite DB survives).
@@ -113,7 +152,7 @@ pnpm gui
 - **Revert to a previous image:** rebuild from the tagged commit on branch
   `solana-only` (`git checkout <commit> && docker compose build`).
 
-## 8. Key-custody & security notes
+## 9. Key-custody & security notes
 
 - The Solana keypair **is** the automaton's identity and its money. Anyone with
   `wallet.json` controls it. Volume backups are encrypted-at-rest only if your
@@ -121,6 +160,10 @@ pnpm gui
 - Never commit `.env`, `wallet.json`, or any backup of it. `.gitignore` covers
   `.env` and `dist/`; the runtime keeps keys under `~/.automaton` (mode 0700)
   on bare metal.
+- The **funding wallet** (`deploy/funding-wallet.json` / `FUNDING_WALLET_SECRET`)
+  is a second key with real SOL on it: same rules — never committed (gitignored),
+  backed up to encrypted storage only, never pasted into chat or screenshots.
+  It only ever signs child-funding transfers, but possession = control.
 - The dashboard (`/api/*`) has **no authentication** — bind it to localhost or
   put it behind a reverse proxy with auth before exposing it to a network.
 - The Helius key in `.env` is a paid API credential: treat it like a password.
@@ -129,7 +172,7 @@ pnpm gui
 - `constitution.md` is immutable by repo law — the agent carries it into every
   child it spawns. Do not edit it.
 
-## 9. Known limitations / documented stubs
+## 10. Known limitations / documented stubs
 
 - **x402 v2 Solana payload shape** (`payload.transaction` = base64 signed
   SPL-transfer tx) is a best-effort adaptation — no live facilitator existed to

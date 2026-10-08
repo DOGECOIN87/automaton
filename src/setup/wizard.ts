@@ -190,12 +190,81 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
   console.log(chalk.green("  Default skills installed (conway-compute, conway-payments, survival)\n"));
 
   // ─── 6. Funding guidance ──────────────────────────────────────
-  console.log(chalk.cyan("  [6/6] Funding\n"));
+  console.log(chalk.cyan("  [6/7] Funding\n"));
   showFundingPanel(walletAddress);
+
+  // ─── 7. Child funding wallet ──────────────────────────────────
+  console.log(chalk.cyan("  [7/7] Child funding wallet\n"));
+  await showChildFundingWalletPanel();
 
   closePrompts();
 
   return config;
+}
+
+/**
+ * Prominently display the dedicated child-funding wallet: its public
+ * address, live SOL balance, and the per-child allocation. Spawning is
+ * REFUSED until this wallet is funded — this panel is the operator's
+ * checkpoint before any child agent can exist.
+ */
+async function showChildFundingWalletPanel(): Promise<void> {
+  const {
+    loadFundingWallet,
+    getChildFundSol,
+    getFundingWalletBalanceLamports,
+  } = await import("../solana/funding-wallet.js");
+  const { LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+
+  const w = 58;
+  const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
+  const line = (s: string, color = chalk.yellow) =>
+    console.log(color(`  │${pad(s, w)}│`));
+
+  console.log(chalk.yellow(`  ╭${"─".repeat(w)}╮`));
+  line("  CHILD FUNDING WALLET — fund this BEFORE any spawn");
+  line("");
+
+  const wallet = loadFundingWallet();
+  if (!wallet) {
+    line("  Status: NOT CONFIGURED", chalk.red);
+    line("");
+    line("  Provide it via ONE of:");
+    line("    - FUNDING_WALLET_SECRET env (JSON array or base58), or");
+    line("    - deploy/funding-wallet.json mounted at FUNDING_WALLET_PATH");
+    line("");
+    line("  Spawning children is REFUSED until this is set up.", chalk.red);
+    console.log(chalk.yellow(`  ╰${"─".repeat(w)}╯`));
+    console.log("");
+    return;
+  }
+
+  line(`  Address: ${wallet.address}`);
+  line(`  Per-child: ${getChildFundSol()} SOL (CHILD_FUND_SOL)`);
+  line(`  Explorer: https://solscan.io/account/${wallet.address.slice(0, 20)}...`);
+  line("");
+
+  try {
+    const lamports = await getFundingWalletBalanceLamports(wallet.address);
+    const sol = lamports / LAMPORTS_PER_SOL;
+    const funded = sol >= getChildFundSol();
+    line(
+      `  Live balance: ${sol.toFixed(6)} SOL`,
+      funded ? chalk.green : chalk.red,
+    );
+    if (!funded) {
+      line(`  NOT ENOUGH for one child (${getChildFundSol()} SOL needed).`, chalk.red);
+      line(`  Send SOL to the address above, then re-run --status.`, chalk.red);
+    } else {
+      line("  Funded — children can spawn.", chalk.green);
+    }
+  } catch (err: any) {
+    line(`  Balance check failed: ${err?.message ?? err}`, chalk.red);
+    line("  (RPC unreachable — fund it anyway, balance shows in the GUI.)");
+  }
+
+  console.log(chalk.yellow(`  ╰${"─".repeat(w)}╯`));
+  console.log("");
 }
 
 function showFundingPanel(address: string): void {

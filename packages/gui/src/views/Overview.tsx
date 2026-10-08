@@ -10,6 +10,7 @@ export interface RuntimeState {
   turnCount?: number;
   tier?: string | null;
   financial?: { creditsCents?: number; usdcBalance?: number; lastChecked?: string } | null;
+  fundingWallet?: { address?: string; childFundSol?: number; solBalance?: number | null } | null;
   startedAt?: string;
   toolsSummary?: { total?: number; byCategory?: Record<string, number> };
   heartbeat?: { entries?: Array<{ name: string; schedule: string; enabled: boolean; task: string }>; lastPing?: string };
@@ -30,9 +31,32 @@ export default function Overview({ state, events }: { state: RuntimeState | null
   const lastTick = byType(events, "heartbeat.tick").slice(-1)[0];
   const topups = byType(events, "funding.topup").slice(-5).reverse();
   const aliveChildren = (state?.children ?? []).filter((c) => !["dead", "cleaned_up", "failed"].includes(c.status));
+  const fw = state?.fundingWallet;
+  const fwFunded = typeof fw?.solBalance === "number" && typeof fw?.childFundSol === "number"
+    ? fw.solBalance >= fw.childFundSol
+    : null;
 
   return (
     <div>
+      {/* Prominent funding-wallet banner — spawns are refused until this is funded */}
+      <div className="panel" style={{ marginBottom: 16, borderColor: fw && fwFunded ? undefined : "#a33" }}>
+        <h2>Child funding wallet <span className="muted">(spawns refused until funded)</span></h2>
+        {!fw?.address ? (
+          <div className="note">Not configured — set FUNDING_WALLET_SECRET or mount deploy/funding-wallet.json. See DEPLOY.md.</div>
+        ) : (
+          <div>
+            <div className="mono" style={{ fontSize: 15 }}>{fw.address}</div>
+            <div className="sub" style={{ marginTop: 6 }}>
+              Balance: {typeof fw.solBalance === "number" ? `${fw.solBalance.toFixed(6)} SOL` : "unknown (RPC unreachable)"}
+              {" · "}per-child: {fw.childFundSol ?? "—"} SOL
+              {" · "}
+              <span className={`pill ${fwFunded === null ? "unknown" : fwFunded ? "running" : "critical"}`}>
+                {fwFunded === null ? "unknown" : fwFunded ? "funded" : "INSUFFICIENT"}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
       <div className="grid">
         <div className="card">
           <h3>Agent state</h3>
