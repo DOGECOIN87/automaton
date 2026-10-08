@@ -4,7 +4,6 @@
  * All shared interfaces for the sovereign AI agent runtime.
  */
 
-import type { PrivateKeyAccount, Address } from "viem";
 import type { ChainType, ChainIdentity } from "./identity/chain.js";
 
 // ─── Identity ────────────────────────────────────────────────────
@@ -12,23 +11,23 @@ import type { ChainType, ChainIdentity } from "./identity/chain.js";
 export interface AutomatonIdentity {
   name: string;
   address: string;
-  account: PrivateKeyAccount;
+  /** Solana signer (Ed25519). Replaces viem's PrivateKeyAccount. */
+  account: ChainIdentity;
   creatorAddress: string;
   sandboxId: string;
   apiKey: string;
   createdAt: string;
-  /** Chain type for this automaton's wallet identity. Defaults to "evm". */
+  /** Chain type for this automaton's wallet identity. Always "solana". */
   chainType?: ChainType;
   /** Chain-agnostic identity wrapper. Parallel to `account` for backward compat. */
   chainIdentity?: ChainIdentity;
 }
 
 export interface WalletData {
-  privateKey?: `0x${string}`;
   /** Base58-encoded 64-byte Ed25519 secret key (Solana wallets). */
   secretKey?: string;
   createdAt: string;
-  /** Chain type for this wallet. Missing = "evm" for backward compat. */
+  /** Chain type for this wallet. Always "solana". */
   chainType?: ChainType;
 }
 
@@ -71,9 +70,13 @@ export interface AutomatonConfig {
   // Phase 2 config additions
   soulConfig?: SoulConfig;
   modelStrategy?: ModelStrategyConfig;
-  /** Custom RPC endpoint for Base chain interactions (overrides default public RPC) */
+  /** Custom RPC endpoint for Solana interactions (overrides default public RPC) */
   rpcUrl?: string;
-  /** Chain type for this automaton. Defaults to "evm" if absent. */
+  /** Solana RPC URL. Defaults to SOLANA_RPC_URL env or https://api.mainnet-beta.solana.com */
+  solanaRpcUrl?: string;
+  /** Solana commitment level. Defaults to SOLANA_COMMITMENT env or "confirmed". */
+  solanaCommitment?: "confirmed" | "finalized" | "processed";
+  /** Chain type for this automaton. Always "solana". */
   chainType?: ChainType;
 }
 
@@ -290,7 +293,7 @@ export type ThreatLevel = "low" | "medium" | "high" | "critical";
 
 export type SanitizationMode =
   | "social_message"      // Full injection defense
-  | "social_address"      // Alphanumeric + 0x prefix only
+  | "social_address"      // Alphanumeric (base58) only
   | "tool_result"         // Strip prompt boundaries, limit size
   | "skill_instruction";  // Strip tool call syntax, add framing
 
@@ -376,8 +379,9 @@ export interface ConwayClient {
     creatorAddress: string;
     name: string;
     bio?: string;
-    genesisPromptHash?: `0x${string}`;
-    account: PrivateKeyAccount;
+    genesisPromptHash?: string;
+    /** Solana signer (Ed25519). Replaces viem's PrivateKeyAccount. */
+    account: ChainIdentity;
     nonce?: string;
     chainType?: ChainType;
     chainIdentity?: ChainIdentity;
@@ -785,9 +789,12 @@ export interface AgentService {
 }
 
 export interface RegistryEntry {
+  /** On-chain attestation id. For Solana: the memo transaction signature. */
   agentId: string;
   agentURI: string;
+  /** CAIP-2 style chain id, e.g. "solana:mainnet". */
   chain: string;
+  /** Program used for the attestation. For Solana: the Memo program id. */
   contractAddress: string;
   txHash: string;
   registeredAt: string;

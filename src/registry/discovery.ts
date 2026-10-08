@@ -1,8 +1,9 @@
 /**
- * Agent Discovery
+ * Agent Discovery — Solana
  *
- * Discover other agents via ERC-8004 registry queries.
- * Fetch and parse agent cards from URIs.
+ * Discover other agents via Solana attestation memos (the Solana-native
+ * replacement for ERC-8004 registry queries). Fetch and parse agent cards
+ * from URIs.
  *
  * Phase 3.2: Added caching, configurable IPFS gateway, stricter validation.
  */
@@ -14,12 +15,9 @@ import type {
   DiscoveredAgentCacheRow,
 } from "../types.js";
 import { DEFAULT_DISCOVERY_CONFIG } from "../types.js";
-import { queryAgent, getTotalAgents, getRegisteredAgentsByEvents } from "./erc8004.js";
-import { keccak256, toBytes } from "viem";
+import { queryAgent, discoverAttestations, sha256Hex } from "./solana-attestation.js";
 import { createLogger } from "../observability/logger.js";
 const logger = createLogger("registry.discovery");
-
-type Network = "mainnet" | "testnet";
 
 // Overall discovery timeout (60 seconds)
 const DISCOVERY_TIMEOUT_MS = 60_000;
@@ -159,7 +157,7 @@ function setCachedCard(
     const now = new Date().toISOString();
     const validUntil = new Date(Date.now() + ttlMs).toISOString();
     const cardJson = JSON.stringify(card);
-    const cardHash = keccak256(toBytes(cardJson));
+    const cardHash = sha256Hex(cardJson);
 
     db.prepare(
       `INSERT INTO discovered_agents_cache
@@ -215,61 +213,34 @@ async function enrichAgentWithCard(
  */
 export async function discoverAgents(
   limit: number = 20,
-  network: Network = "mainnet",
+  _network?: string,
   config?: Partial<DiscoveryConfig>,
   db?: import("better-sqlite3").Database,
   rpcUrl?: string,
 ): Promise<DiscoveredAgent[]> {
   const cfg = { ...DEFAULT_DISCOVERY_CONFIG, ...config };
-  const total = await getTotalAgents(network, rpcUrl);
   const agents: DiscoveredAgent[] = [];
 
   const overallStart = Date.now();
 
-  if (total > 0) {
-    // totalSupply worked — use sequential iteration (existing path)
-    const scanCount = Math.min(total, limit, cfg.maxScanCount);
-    for (let i = total; i > total - scanCount && i > 0; i--) {
-      if (Date.now() - overallStart > DISCOVERY_TIMEOUT_MS) {
-        logger.warn("Overall discovery timeout reached (60s), returning partial results");
-        break;
-      }
+  // Solana discovery: scan recent Memo-program transactions for attestation
+  // memos (newest first). There is no enumerable on-chain registry on Solana.
+  const attestations = await discoverAttestations(
+    Math.min(limit, cfg.maxScanCount),
+    rpcUrl,
+  );
 
-      try {
-        const agent = await queryAgent(i.toString(), network, rpcUrl);
-        if (agent) {
-          await enrichAgentWithCard(agent, cfg, db);
-          agents.push(agent);
-        }
-      } catch (error) {
-        logger.error("Agent query failed:", error instanceof Error ? error : undefined);
-      }
+  for (const agent of attestations) {
+    if (Date.now() - overallStart > DISCOVERY_TIMEOUT_MS) {
+      logger.warn("Overall discovery timeout reached (60s), returning partial results");
+      break;
     }
-  } else {
-    // totalSupply returned 0 (likely reverted) — fall back to Transfer event scanning
-    logger.info("totalSupply returned 0, falling back to Transfer event scanning");
-    const eventAgents = await getRegisteredAgentsByEvents(network, Math.min(limit, cfg.maxScanCount), rpcUrl);
 
-    for (const { tokenId, owner } of eventAgents) {
-      if (Date.now() - overallStart > DISCOVERY_TIMEOUT_MS) {
-        logger.warn("Overall discovery timeout reached (60s), returning partial results");
-        break;
-      }
-
-      try {
-        // Try queryAgent first (gets tokenURI), fall back to event data only
-        const agent = await queryAgent(tokenId, network, rpcUrl);
-        if (agent) {
-          // Use owner from event if queryAgent couldn't get it
-          if (!agent.owner && owner) {
-            agent.owner = owner;
-          }
-          await enrichAgentWithCard(agent, cfg, db);
-          agents.push(agent);
-        }
-      } catch (error) {
-        logger.error(`Agent query failed for token ${tokenId}:`, error instanceof Error ? error : undefined);
-      }
+    try {
+      await enrichAgentWithCard(agent, cfg, db);
+      agents.push(agent);
+    } catch (error) {
+      logger.error("Agent card enrichment failed:", error instanceof Error ? error : undefined);
     }
   }
 
@@ -367,12 +338,12 @@ export async function fetchAgentCard(
 export async function searchAgents(
   keyword: string,
   limit: number = 10,
-  network: Network = "mainnet",
+  _network?: string,
   config?: Partial<DiscoveryConfig>,
   db?: import("better-sqlite3").Database,
   rpcUrl?: string,
 ): Promise<DiscoveredAgent[]> {
-  const all = await discoverAgents(50, network, config, db, rpcUrl);
+  const all = await discoverAgents(50, _network, config, db, rpcUrl);
   const lower = keyword.toLowerCase();
 
   return all

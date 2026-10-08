@@ -78,4 +78,4 @@ export function validateRelayUrl(url: string): void {
   }
 }
 
-// isValidAddress is re-exported from ../identity/chain.js (supports both EVM and Solana)
+// isValidAddress is re-exported from ../identity/chain.js (Solana base58 addresses)

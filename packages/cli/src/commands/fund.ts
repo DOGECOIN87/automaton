@@ -1,5 +1,5 @@
 /**
- * automaton-cli fund <amount> [--to 0x...]
+ * automaton-cli fund <amount> [--to <base58-address>]
  *
  * Transfer Conway credits using the configured Conway API key.
  */
@@ -12,10 +12,10 @@ const toIndex = args.indexOf("--to");
 const toAddress = toIndex >= 0 ? args[toIndex + 1] : undefined;
 
 if (!amount) {
-  console.log("Usage: automaton-cli fund <amount> [--to 0x...]");
+  console.log("Usage: automaton-cli fund <amount> [--to <base58-address>]");
   console.log("Examples:");
   console.log("  automaton-cli fund 5.00");
-  console.log("  automaton-cli fund 500 --to 0xabc...");
+  console.log("  automaton-cli fund 500 --to DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy");
   process.exit(1);
 }
 

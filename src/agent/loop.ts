@@ -258,9 +258,8 @@ export async function runAgentLoop(
                     const { topupForSandbox } = await import("../conway/topup.js");
                     const topupResult = await topupForSandbox({
                       apiUrl: config.conwayApiUrl,
-                      account: identity.account,
+                      signer: identity.account,
                       error: sandboxError,
-                      chainType: config.chainType || identity.chainType || "evm",
                     });
 
                     if (topupResult?.success) {
@@ -358,7 +357,7 @@ export async function runAgentLoop(
   onStateChange?.("waking");
 
   // Get financial state
-  let financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+  let financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "solana");
 
   // Check if this is the first run
   const isFirstRun = db.getTurnCount() === 0;
@@ -426,7 +425,7 @@ export async function runAgentLoop(
       }
 
       // Refresh financial state periodically
-      financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+      financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "solana");
 
       // Check survival tier
       // api_unreachable: creditsCents === -1 means API failed with no cache.
@@ -453,15 +452,14 @@ export async function runAgentLoop(
               const { bootstrapTopup } = await import("../conway/topup.js");
               const topupResult = await bootstrapTopup({
                 apiUrl: config.conwayApiUrl,
-                account: identity.account,
+                signer: identity.account,
                 creditsCents: financial.creditsCents,
-                chainType: config.chainType || identity.chainType || "evm",
               });
               if (topupResult?.success) {
                 log(config, `[AUTO-TOPUP] Bought $${topupResult.amountUsd} credits from USDC mid-loop`);
                 // Re-fetch financial state after topup so the rest of
                 // the turn sees the updated balance.
-                financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "evm");
+                financial = await getFinancialState(conway, identity.address, db, config.chainType || identity.chainType || "solana");
               }
             } catch (err: any) {
               logger.warn(`Inline auto-topup failed: ${err.message}`);

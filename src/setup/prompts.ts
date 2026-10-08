@@ -77,9 +77,8 @@ export async function promptAddress(label: string, chainType?: string): Promise<
       }
       console.log(chalk.yellow("  Invalid Solana address. Must be a base58-encoded 32-byte public key."));
     } else {
-      // EVM: 0x + 40 hex chars
-      if (/^0x[0-9a-fA-F]{40}$/.test(value)) return value;
-      console.log(chalk.yellow("  Invalid Ethereum address. Must be 0x followed by 40 hex characters."));
+      // Solana-only: EVM addresses are not accepted
+      console.log(chalk.yellow("  Invalid address. This runtime is Solana-only: use a base58-encoded 32-byte public key."));
     }
   }
 }

@@ -34,8 +34,7 @@ import { DEFAULT_TREASURY_POLICY } from "./types.js";
 import { createLogger, setGlobalLogLevel, StructuredLogger } from "./observability/logger.js";
 import { prettySink } from "./observability/pretty-sink.js";
 import { bootstrapTopup } from "./conway/topup.js";
-import { randomUUID } from "crypto";
-import { keccak256, toHex } from "viem";
+import { randomUUID, createHash } from "crypto";
 
 const logger = createLogger("main");
 const VERSION = "0.2.1";
@@ -195,7 +194,7 @@ async function run(): Promise<void> {
 
   // Load wallet (chain-aware)
   const { account, chainIdentity, chainType: walletChainType } = await getWallet();
-  const resolvedChainType = config.chainType || walletChainType || "evm";
+  const resolvedChainType = config.chainType || walletChainType || "solana";
   const apiKey = config.conwayApiKey || loadApiKeyFromConfig();
   if (!apiKey) {
     logger.error("No API key found. Run: automaton --provision");
@@ -250,7 +249,7 @@ async function run(): Promise<void> {
   if (registrationState !== "registered") {
     try {
       const genesisPromptHash = config.genesisPrompt
-        ? keccak256(toHex(config.genesisPrompt))
+        ? createHash("sha256").update(config.genesisPrompt, "utf8").digest("hex")
         : undefined;
       await conway.registerAutomaton({
         automatonId,
@@ -300,10 +299,10 @@ async function run(): Promise<void> {
     logger.info(`[${new Date().toISOString()}] Ollama backend: ${ollamaBaseUrl}`);
   }
 
-  // Create social client (chain-aware: pass ChainIdentity for Solana signing)
+  // Create social client (signs with the Solana ChainIdentity)
   let social: SocialClientInterface | undefined;
   if (config.socialRelayUrl) {
-    social = createSocialClient(config.socialRelayUrl, resolvedChainType === "solana" ? chainIdentity : account);
+    social = createSocialClient(config.socialRelayUrl, chainIdentity);
     logger.info(`[${new Date().toISOString()}] Social relay: ${config.socialRelayUrl}`);
   }
 
@@ -349,9 +348,8 @@ async function run(): Promise<void> {
           const creditsCents = await conway.getCreditsBalance().catch(() => 0);
           const topupResult = await bootstrapTopup({
             apiUrl: config.conwayApiUrl,
-            account,
+            signer: account,
             creditsCents,
-            chainType: resolvedChainType,
           });
           if (topupResult?.success) {
             logger.info(

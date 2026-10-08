@@ -654,8 +654,8 @@ export const MIGRATION_V9_ALTER_CHILDREN_ROLE = `
 
 export const MIGRATION_V11 = `
   -- Schema version: 11
-  -- Add chain_type column to children table for multi-chain support
-  ALTER TABLE children ADD COLUMN chain_type TEXT DEFAULT 'evm';
+  -- Add chain_type column to children table (Solana-only)
+  ALTER TABLE children ADD COLUMN chain_type TEXT DEFAULT 'solana';
 `;
 
 export const MIGRATION_V10 = `

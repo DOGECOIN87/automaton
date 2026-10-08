@@ -1,26 +1,28 @@
 /**
- * Chain Abstraction Layer
+ * Chain Abstraction Layer — Solana Only
  *
- * Chain-at-genesis selection: an automaton picks `evm` or `solana` at setup
- * time and keeps that identity forever. The wallet IS the sovereign identity.
+ * This automaton is Solana-only: the wallet is an Ed25519 keypair,
+ * the address is the base58-encoded public key, and all signing is
+ * Ed25519 via tweetnacl. There are no EVM code paths.
  *
- * Ported from aiws control-plane wallet.ts + siws.ts utilities.
+ * The wallet IS the sovereign identity.
  */
 
-import type { PrivateKeyAccount } from "viem";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 
 // ─── Chain Type ──────────────────────────────────────────────
 
-export type ChainType = "evm" | "solana";
+/**
+ * The only supported chain. Kept as a type alias so config files,
+ * the database, and downstream code can keep a `chainType` field
+ * without carrying dead EVM branches.
+ */
+export type ChainType = "solana";
 
 // ─── Address Validation ──────────────────────────────────────
 
-export function isValidEvmAddress(address: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(address);
-}
-
+/** A valid Solana address is a base58-encoded 32-byte public key. */
 export function isValidSolanaAddress(address: string): boolean {
   try {
     return bs58.decode(address).length === 32;
@@ -29,50 +31,47 @@ export function isValidSolanaAddress(address: string): boolean {
   }
 }
 
+/**
+ * Validate an address. Solana-only: accepts base58 ed25519 addresses.
+ * The optional `chainType` parameter is kept for call-site compatibility;
+ * the only accepted value is "solana".
+ */
 export function isValidAddress(address: string, chainType?: ChainType): boolean {
-  if (chainType === "evm") return isValidEvmAddress(address);
-  if (chainType === "solana") return isValidSolanaAddress(address);
-  return isValidEvmAddress(address) || isValidSolanaAddress(address);
+  if (chainType !== undefined && chainType !== "solana") return false;
+  return isValidSolanaAddress(address);
 }
 
+/** Detect the chain of an address. Returns "solana" or null. */
 export function detectChainType(address: string): ChainType | null {
-  if (isValidEvmAddress(address)) return "evm";
   if (isValidSolanaAddress(address)) return "solana";
   return null;
 }
 
-export function normalizeAddress(address: string, chain: ChainType): string {
-  return chain === "evm" ? address.toLowerCase() : address;
+/**
+ * Normalize an address for canonical message formats.
+ * Solana addresses are base58 and case-sensitive — never lowercased.
+ */
+export function normalizeAddress(address: string, _chain?: ChainType): string {
+  return address;
 }
 
 // ─── Chain Identity Interface ────────────────────────────────
 
 /**
- * Chain-agnostic identity interface.
- * Wraps either a viem PrivateKeyAccount (EVM) or an Ed25519 keypair (Solana).
+ * Chain identity interface.
+ * Wraps the automaton's Ed25519 keypair (Solana).
+ * This is also the signer passed to payment, social, and registry code —
+ * it replaces viem's PrivateKeyAccount everywhere.
  */
 export interface ChainIdentity {
   readonly chainType: ChainType;
   readonly address: string;
   signMessage(message: string): Promise<string>;
-}
-
-/**
- * EVM chain identity wrapping a viem PrivateKeyAccount.
- */
-export class EvmChainIdentity implements ChainIdentity {
-  readonly chainType: ChainType = "evm";
-  readonly address: string;
-  readonly account: PrivateKeyAccount;
-
-  constructor(account: PrivateKeyAccount) {
-    this.account = account;
-    this.address = account.address;
-  }
-
-  async signMessage(message: string): Promise<string> {
-    return this.account.signMessage({ message });
-  }
+  /**
+   * Sign raw bytes and return the raw 64-byte Ed25519 signature.
+   * Used for Solana transaction messages (which are binary, not text).
+   */
+  signBytes(bytes: Uint8Array): Promise<Uint8Array>;
 }
 
 /**
@@ -90,8 +89,12 @@ export class SolanaChainIdentity implements ChainIdentity {
 
   async signMessage(message: string): Promise<string> {
     const messageBytes = new TextEncoder().encode(message);
-    const signature = nacl.sign.detached(messageBytes, this.keypair.secretKey);
+    const signature = await this.signBytes(messageBytes);
     return bs58.encode(signature);
+  }
+
+  async signBytes(bytes: Uint8Array): Promise<Uint8Array> {
+    return nacl.sign.detached(bytes, this.keypair.secretKey);
   }
 
   /** Get the raw 64-byte secret key for serialization. */

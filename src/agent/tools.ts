@@ -266,11 +266,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       parameters: { type: "object", properties: {} },
       execute: async (_args, ctx) => {
         const { getUsdcBalance } = await import("../conway/x402.js");
-        const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
-        const network = chainType === "solana" ? "solana:mainnet" : "eip155:8453";
-        const balance = await getUsdcBalance(ctx.identity.address, network, chainType);
-        const networkLabel = chainType === "solana" ? "Solana" : "Base";
-        return `USDC balance: ${balance.toFixed(6)} USDC on ${networkLabel}`;
+        const balance = await getUsdcBalance(ctx.identity.address, "solana:mainnet");
+        return `USDC balance: ${balance.toFixed(6)} USDC on Solana`;
       },
     },
     {
@@ -291,12 +288,6 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         required: ["amount_usd"],
       },
       execute: async (args, ctx) => {
-        // Solana guard: x402 topup is EVM-only
-        const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
-        if (chainType === "solana") {
-          return "Credit topup via x402 requires an EVM wallet. Solana automatons should fund credits via the Conway dashboard or credits API.";
-        }
-
         const { topupCredits, TOPUP_TIERS } =
           await import("../conway/topup.js");
         const amountUsd = args.amount_usd as number;
@@ -305,9 +296,9 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           return `Invalid tier. Valid amounts (USD): ${TOPUP_TIERS.join(", ")}`;
         }
 
-        // Check USDC balance first (EVM-only path after Solana guard above)
+        // Check USDC-SPL balance first
         const { getUsdcBalance } = await import("../conway/x402.js");
-        const usdcBalance = await getUsdcBalance(ctx.identity.address, "eip155:8453");
+        const usdcBalance = await getUsdcBalance(ctx.identity.address, "solana:mainnet");
         if (usdcBalance < amountUsd) {
           return `Insufficient USDC. Balance: $${usdcBalance.toFixed(2)}, requested: $${amountUsd}. Choose a smaller tier or wait for funding.`;
         }
@@ -1393,9 +1384,9 @@ Model: ${ctx.inference.getDefaultModel()}
 
     // ── Registry Tools ──
     {
-      name: "register_erc8004",
+      name: "register_attestation",
       description:
-        "Register on-chain as a Trustless Agent via ERC-8004. Performs gas balance preflight check. NOTE: If already registered, use update_agent_card instead to avoid creating duplicate Agent IDs.",
+        "Attest your on-chain identity on Solana by publishing a signed memo transaction from your wallet (the Solana-native equivalent of ERC-8004 registration). NOTE: If already registered, use update_agent_card instead to avoid duplicate attestations.",
       category: "registry",
       riskLevel: "dangerous",
       parameters: {
@@ -1405,42 +1396,27 @@ Model: ${ctx.inference.getDefaultModel()}
             type: "string",
             description: "URI pointing to your agent card JSON",
           },
-          network: {
-            type: "string",
-            description: "mainnet or testnet (default: mainnet)",
-          },
         },
         required: ["agent_uri"],
       },
       execute: async (args, ctx) => {
-        // Solana guard: ERC-8004 is EVM-only
-        const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
-        if (chainType === "solana") {
-          return "ERC-8004 is an EVM-only standard. Your Solana identity is registered via Conway API instead.";
-        }
-
         // Check if already registered in local database
         const existingEntry = ctx.db.getRegistryEntry();
         if (existingEntry) {
           return `Already registered! Agent ID: ${existingEntry.agentId}. Use update_agent_card tool to update your agent URI instead of creating a new registration.`;
         }
 
-        // Phase 3.2: registerAgent now includes preflight gas check
-        const { registerAgent } = await import("../registry/erc8004.js");
+        const { registerAgent } = await import("../registry/solana-attestation.js");
         try {
           const entry = await registerAgent(
-            ctx.identity.account,
+            ctx.identity.chainIdentity || ctx.identity.account,
             args.agent_uri as string,
-            ((args.network as string) || "mainnet") as any,
             ctx.db,
-            ctx.config.rpcUrl,
+            { name: ctx.identity.name, rpcUrl: ctx.config.solanaRpcUrl },
           );
-          return `Registered on-chain! Agent ID: ${entry.agentId}, TX: ${entry.txHash}`;
+          return `Attested on-chain! Agent ID: ${entry.agentId}, TX: ${entry.txHash}`;
         } catch (err: any) {
-          if (err.message?.includes("Insufficient ETH")) {
-            return `Registration failed: ${err.message}. Please fund your wallet with ETH for gas.`;
-          }
-          throw err;
+          return `Attestation failed: ${err.message}. Make sure the wallet holds SOL for transaction fees.`;
         }
       },
     },
@@ -1461,7 +1437,7 @@ Model: ${ctx.inference.getDefaultModel()}
     },
     {
       name: "discover_agents",
-      description: "Discover other agents via ERC-8004 registry with caching.",
+      description: "Discover other agents via Solana attestation memos with caching.",
       category: "registry",
       riskLevel: "safe",
       parameters: {
@@ -1469,7 +1445,7 @@ Model: ${ctx.inference.getDefaultModel()}
         properties: {
           keyword: { type: "string", description: "Search keyword (optional)" },
           limit: { type: "number", description: "Max results (default: 10)" },
-          network: { type: "string", description: "mainnet or testnet" },
+          network: { type: "string", description: "ignored (Solana mainnet only)" },
           format: {
             type: "string",
             description:
@@ -1480,15 +1456,14 @@ Model: ${ctx.inference.getDefaultModel()}
       execute: async (args, ctx) => {
         const { discoverAgents, searchAgents } =
           await import("../registry/discovery.js");
-        const network = ((args.network as string) || "mainnet") as any;
         const keyword = args.keyword as string | undefined;
         const limit = (args.limit as number) || 10;
 
         // Phase 3.2: Pass db.raw for agent card caching
-        const rpcUrl = ctx.config.rpcUrl;
+        const rpcUrl = ctx.config.solanaRpcUrl;
         const agents = keyword
-          ? await searchAgents(keyword, limit, network, undefined, ctx.db.raw, rpcUrl)
-          : await discoverAgents(limit, network, undefined, ctx.db.raw, rpcUrl);
+          ? await searchAgents(keyword, limit, undefined, undefined, ctx.db.raw, rpcUrl)
+          : await discoverAgents(limit, undefined, undefined, ctx.db.raw, rpcUrl);
 
         if (agents.length === 0) return "No agents found.";
 
@@ -1523,27 +1498,17 @@ Model: ${ctx.inference.getDefaultModel()}
         properties: {
           agent_id: {
             type: "string",
-            description: "Target agent's ERC-8004 ID",
+            description: "Target agent's attestation ID (transaction signature)",
           },
           score: { type: "number", description: "Score 1-5" },
           comment: {
             type: "string",
             description: "Feedback comment (max 500 chars)",
           },
-          network: {
-            type: "string",
-            description: "mainnet or testnet (default: mainnet)",
-          },
         },
         required: ["agent_id", "score", "comment"],
       },
       execute: async (args, ctx) => {
-        // Solana guard: on-chain feedback is EVM-only
-        const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
-        if (chainType === "solana") {
-          return "On-chain feedback requires an EVM wallet. Solana automatons cannot leave ERC-8004 reputation feedback.";
-        }
-
         // Phase 3.2: Validate score 1-5
         const score = args.score as number;
         if (!Number.isInteger(score) || score < 1 || score > 5) {
@@ -1554,19 +1519,16 @@ Model: ${ctx.inference.getDefaultModel()}
         if (comment.length > 500) {
           return `Comment too long: ${comment.length} chars (max 500).`;
         }
-        const { leaveFeedback } = await import("../registry/erc8004.js");
-        // Phase 3.2: Use config-based network, not hardcoded "mainnet"
-        const network = ((args.network as string) || "mainnet") as any;
+        const { leaveFeedback } = await import("../registry/solana-attestation.js");
         const hash = await leaveFeedback(
-          ctx.identity.account,
+          ctx.identity.chainIdentity || ctx.identity.account,
           args.agent_id as string,
           score,
           comment,
-          network,
           ctx.db,
-          ctx.config.rpcUrl,
+          ctx.config.solanaRpcUrl,
         );
-        return `Feedback submitted. TX: ${hash}`;
+        return `Feedback submitted as a Solana memo. TX: ${hash}`;
       },
     },
     {
@@ -1664,9 +1626,8 @@ Model: ${ctx.inference.getDefaultModel()}
               const { topupForSandbox } = await import("../conway/topup.js");
               const topup = await topupForSandbox({
                 apiUrl: ctx.config.conwayApiUrl,
-                account: ctx.identity.account,
+                signer: ctx.identity.account,
                 error: err,
-                chainType: ctx.config.chainType || ctx.identity.chainType || "evm",
               });
               if (topup?.success) {
                 const retryLifecycle = new ChildLifecycle(ctx.db.raw);
@@ -1732,7 +1693,7 @@ Model: ${ctx.inference.getDefaultModel()}
         // Reject zero-address
         const { isValidWalletAddress } =
           await import("../replication/spawn.js");
-        const childChainType = child.chainType || ctx.config.chainType || ctx.identity.chainType || "evm";
+        const childChainType = child.chainType || ctx.config.chainType || ctx.identity.chainType || "solana";
         if (!isValidWalletAddress(child.address, childChainType)) {
           return `Blocked: Child ${args.child_id} has invalid wallet address. Must be wallet_verified.`;
         }
@@ -2752,12 +2713,6 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["url"],
       },
       execute: async (args, ctx) => {
-        // Solana guard: x402 payments are EVM-only
-        const chainType = ctx.config.chainType || ctx.identity.chainType || "evm";
-        if (chainType === "solana") {
-          return "x402 payment requires an EVM wallet. Solana automatons cannot sign EVM payment authorizations. Use Conway credits API instead.";
-        }
-
         const { x402Fetch } = await import("../conway/x402.js");
         const { DEFAULT_TREASURY_POLICY } = await import("../types.js");
         const url = args.url as string;

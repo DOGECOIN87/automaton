@@ -24,10 +24,8 @@ import type {
 } from "../types.js";
 import { ResilientHttpClient } from "./http-client.js";
 import { ulid } from "ulid";
-import { keccak256, toHex } from "viem";
-import type { Address, PrivateKeyAccount } from "viem";
-import { randomUUID } from "crypto";
-import type { ChainType, ChainIdentity } from "../identity/chain.js";
+import { createHash, randomUUID } from "crypto";
+import type { ChainIdentity } from "../identity/chain.js";
 
 interface ConwayClientOptions {
   apiUrl: string;
@@ -97,9 +95,9 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     return JSON.stringify(sorted);
   };
 
-  const hashIdentityPayload = (payload: Record<string, string>): `0x${string}` => {
+  const hashIdentityPayload = (payload: Record<string, string>): string => {
     const canonical = canonicalizePayload(payload);
-    return keccak256(toHex(canonical));
+    return createHash("sha256").update(canonical, "utf8").digest("hex");
   };
 
 
@@ -368,10 +366,9 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     creatorAddress: string;
     name: string;
     bio?: string;
-    genesisPromptHash?: `0x${string}`;
-    account: PrivateKeyAccount;
+    genesisPromptHash?: string;
+    account: ChainIdentity;
     nonce?: string;
-    chainType?: ChainType;
     chainIdentity?: ChainIdentity;
   }): Promise<{ automaton: Record<string, unknown> }> => {
     const {
@@ -385,7 +382,6 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
       chainIdentity,
     } = params;
     const nonce = params.nonce ?? randomUUID();
-    const isSolana = params.chainType === "solana";
 
     const payload: Record<string, string> = {
       automaton_id: automatonId,
@@ -399,40 +395,14 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     }
 
     const payloadHash = hashIdentityPayload(payload);
-    let signature: string;
 
-    if (isSolana && chainIdentity) {
-      // Solana path: Ed25519 sign of canonical JSON
-      const sigMessage = JSON.stringify({ automatonId, nonce, payloadHash });
-      signature = await chainIdentity.signMessage(sigMessage);
-    } else if (isSolana && !chainIdentity) {
-      throw new Error("Solana registration requires chainIdentity. Pass the ChainIdentity from getWallet().");
-    } else {
-      // EVM path: EIP-712 typed data (unchanged)
-      const domain = {
-        name: "AIWS Automaton",
-        version: "1",
-        chainId: 8453,
-      };
-      const types = {
-        Register: [
-          { name: "automatonId", type: "string" },
-          { name: "nonce", type: "string" },
-          { name: "payloadHash", type: "bytes32" },
-        ],
-      };
-      const message = {
-        automatonId,
-        nonce,
-        payloadHash,
-      };
-      signature = await account.signTypedData({
-        domain,
-        types,
-        primaryType: "Register",
-        message,
-      });
+    // Solana: Ed25519 sign of canonical JSON with the automaton's keypair
+    const signer = chainIdentity || account;
+    if (!signer) {
+      throw new Error("Automaton registration requires a ChainIdentity. Pass the ChainIdentity from getWallet().");
     }
+    const sigMessage = JSON.stringify({ automatonId, nonce, payloadHash });
+    const signature = await signer.signMessage(sigMessage);
 
     const body: Record<string, unknown> = {
       automaton_id: automatonId,
@@ -447,9 +417,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     if (genesisPromptHash) {
       body.genesis_prompt_hash = genesisPromptHash;
     }
-    if (isSolana) {
-      body.chain_type = "solana";
-    }
+    body.chain_type = "solana";
 
     return request("POST", "/v1/automatons/register", body);
   };

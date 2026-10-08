@@ -1,8 +1,9 @@
 /**
- * Agent Card
+ * Agent Card — Solana
  *
  * Generates and manages the agent's self-description card.
- * This is the JSON document pointed to by the ERC-8004 agentURI.
+ * This is the JSON document pointed to by the attestation memo's agentUri
+ * (the Solana-native replacement for the ERC-8004 agentURI).
  * Can be hosted on IPFS or served at /.well-known/agent-card.json
  *
  * Phase 3.2: Fixed code injection in hostAgentCard (S-P0-3),
@@ -20,7 +21,7 @@ import type {
 } from "../types.js";
 
 const AGENT_CARD_TYPE =
-  "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
+  "https://conway.tech/specs/agent-card#attestation-v1";
 
 /**
  * Generate an agent card from the automaton's current state.
@@ -36,11 +37,8 @@ export function generateAgentCard(
   config: AutomatonConfig,
   _db: AutomatonDatabase,
 ): AgentCard {
-  // Chain-aware endpoint: EVM uses CAIP-2 eip155:8453, Solana uses solana:mainnet
-  const chainType = config.chainType || identity.chainType || "evm";
-  const walletEndpoint = chainType === "solana"
-    ? `solana:mainnet:${identity.address}`
-    : `eip155:8453:${identity.address}`;
+  // Solana-only endpoint: CAIP-2 solana:mainnet + base58 wallet address
+  const walletEndpoint = `solana:mainnet:${identity.address}`;
 
   const services: AgentService[] = [
     {
@@ -57,7 +55,7 @@ export function generateAgentCard(
     name: config.name,
     description,
     services,
-    x402Support: chainType !== "solana",
+    x402Support: true,
     active: true,
   };
 }

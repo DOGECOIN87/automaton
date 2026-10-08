@@ -72,7 +72,11 @@ export function loadConfig(): AutomatonConfig | null {
       treasuryPolicy,
       modelStrategy,
       soulConfig,
-      chainType: raw.chainType || "evm",
+      chainType: raw.chainType || "solana",
+      solanaRpcUrl:
+        raw.solanaRpcUrl || process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+      solanaCommitment:
+        raw.solanaCommitment || process.env.SOLANA_COMMITMENT || "confirmed",
     } as AutomatonConfig;
   } catch {
     return null;
@@ -156,6 +160,29 @@ export function createConfig(params: {
     maxChildren: DEFAULT_CONFIG.maxChildren || 3,
     parentAddress: params.parentAddress,
     treasuryPolicy: params.treasuryPolicy ?? DEFAULT_TREASURY_POLICY,
-    chainType: params.chainType || "evm",
+    chainType: params.chainType || "solana",
+    solanaRpcUrl: process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+    solanaCommitment: (process.env.SOLANA_COMMITMENT as AutomatonConfig["solanaCommitment"]) || "confirmed",
   };
+}
+
+/**
+ * Resolve the effective Solana RPC URL for this config.
+ */
+export function getSolanaRpcUrl(config?: Pick<AutomatonConfig, "solanaRpcUrl"> | null): string {
+  return (
+    config?.solanaRpcUrl ||
+    process.env.SOLANA_RPC_URL ||
+    "https://api.mainnet-beta.solana.com"
+  );
+}
+
+/**
+ * Resolve the effective Solana commitment level for this config.
+ */
+export function getSolanaCommitment(
+  config?: Pick<AutomatonConfig, "solanaCommitment"> | null,
+): "confirmed" | "finalized" | "processed" {
+  const c = config?.solanaCommitment || process.env.SOLANA_COMMITMENT;
+  return c === "finalized" || c === "processed" ? c : "confirmed";
 }

@@ -1,22 +1,21 @@
 /**
- * Credit Topup via x402
+ * Credit Topup via x402 — Solana
  *
- * Converts USDC to Conway credits via the x402 payment protocol.
+ * Converts USDC-SPL to Conway credits via the x402 payment protocol.
  *
  * - On startup: bootstraps with the minimum tier ($5) so the agent can run.
  * - At runtime: the agent uses the `topup_credits` tool to choose how much.
  * - Heartbeat: wakes the agent when USDC is available but credits are low.
  *
  * Endpoint: GET /pay/{amountUsd}/{walletAddress}
- * Payment: x402 (USDC on Base, signed TransferWithAuthorization)
+ * Payment: x402 (USDC-SPL on Solana mainnet, signed SPL transfer transaction)
  *
  * Valid tiers: 5, 25, 100, 500, 1000, 2500 (USD)
  */
 
-import type { PrivateKeyAccount, Address } from "viem";
+import type { ChainIdentity } from "../identity/chain.js";
 import { x402Fetch, getUsdcBalance } from "./x402.js";
 import { createLogger } from "../observability/logger.js";
-import type { ChainType } from "../identity/chain.js";
 
 const logger = createLogger("topup");
 
@@ -38,16 +37,16 @@ export interface TopupResult {
  */
 export async function topupCredits(
   apiUrl: string,
-  account: PrivateKeyAccount,
+  signer: ChainIdentity,
   amountUsd: number,
-  recipientAddress?: Address,
+  recipientAddress?: string,
 ): Promise<TopupResult> {
-  const address = recipientAddress || account.address;
+  const address = recipientAddress || signer.address;
   const url = `${apiUrl}/pay/${amountUsd}/${address}`;
 
   logger.info(`Attempting credit topup: $${amountUsd} USD for ${address}`);
 
-  const result = await x402Fetch(url, account, "GET");
+  const result = await x402Fetch(url, signer, "GET");
 
   if (!result.success) {
     logger.error(`Credit topup failed: ${result.error}`);
@@ -75,24 +74,15 @@ export async function topupCredits(
  * Attempt a credit topup in response to a 402 sandbox creation error.
  *
  * Parses the error response to determine the deficit, picks the smallest
- * tier that covers it, checks USDC balance, and calls topupCredits().
+ * tier that covers it, checks USDC-SPL balance, and calls topupCredits().
  * Returns null if the error isn't a 402 or topup can't proceed.
  */
 export async function topupForSandbox(params: {
   apiUrl: string;
-  account: PrivateKeyAccount;
+  signer: ChainIdentity;
   error: Error & { status?: number; responseText?: string };
-  chainType?: ChainType;
 }): Promise<TopupResult | null> {
-  const { apiUrl, account, error, chainType } = params;
-
-  // Solana wallets cannot use x402 for topup (EVM-only payment protocol)
-  if (chainType === "solana") {
-    logger.info(
-      "Sandbox topup skipped: Solana wallets cannot use x402. Fund via Conway credits API or dashboard.",
-    );
-    return null;
-  }
+  const { apiUrl, signer, error } = params;
 
   if (error.status !== 402 && !error.message?.includes("INSUFFICIENT_CREDITS")) return null;
 
@@ -120,7 +110,7 @@ export async function topupForSandbox(params: {
   // Check USDC balance before attempting payment
   let usdcBalance: number;
   try {
-    usdcBalance = await getUsdcBalance(account.address);
+    usdcBalance = await getUsdcBalance(signer.address, "solana:mainnet");
   } catch (err: any) {
     logger.warn(`Failed to check USDC balance for sandbox topup: ${err.message}`);
     return null;
@@ -134,7 +124,7 @@ export async function topupForSandbox(params: {
   }
 
   logger.info(`Sandbox topup: deficit=${deficitCents}c, buying $${selectedTier} tier`);
-  return topupCredits(apiUrl, account, selectedTier);
+  return topupCredits(apiUrl, signer, selectedTier);
 }
 
 /**
@@ -147,22 +137,11 @@ export async function topupForSandbox(params: {
  */
 export async function bootstrapTopup(params: {
   apiUrl: string;
-  account: PrivateKeyAccount;
+  signer: ChainIdentity;
   creditsCents: number;
   creditThresholdCents?: number;
-  chainType?: ChainType;
 }): Promise<TopupResult | null> {
-  const { apiUrl, account, creditsCents, creditThresholdCents = 500, chainType } = params;
-
-  // Solana wallets cannot use x402 for topup (EVM-only payment protocol)
-  if (chainType === "solana") {
-    if (creditsCents < creditThresholdCents) {
-      logger.info(
-        "Bootstrap topup skipped: Solana wallets cannot use x402. Fund via Conway credits API or dashboard.",
-      );
-    }
-    return null;
-  }
+  const { apiUrl, signer, creditsCents, creditThresholdCents = 500 } = params;
 
   if (creditsCents >= creditThresholdCents) {
     return null;
@@ -170,7 +149,7 @@ export async function bootstrapTopup(params: {
 
   let usdcBalance: number;
   try {
-    usdcBalance = await getUsdcBalance(account.address);
+    usdcBalance = await getUsdcBalance(signer.address, "solana:mainnet");
   } catch (err: any) {
     logger.warn(`Failed to check USDC balance for bootstrap topup: ${err.message}`);
     return null;
@@ -188,5 +167,5 @@ export async function bootstrapTopup(params: {
     `Bootstrap topup: credits=$${(creditsCents / 100).toFixed(2)}, USDC=$${usdcBalance.toFixed(2)}, buying $${minTier}`,
   );
 
-  return topupCredits(apiUrl, account, minTier);
+  return topupCredits(apiUrl, signer, minTier);
 }

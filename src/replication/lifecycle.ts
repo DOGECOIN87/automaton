@@ -28,7 +28,7 @@ export class ChildLifecycle {
     this.db.prepare(
       `INSERT INTO children (id, name, address, sandbox_id, genesis_prompt, status, created_at, chain_type)
        VALUES (?, ?, '', ?, ?, 'requested', datetime('now'), ?)`,
-    ).run(childId, name, sandboxId, genesisPrompt, chainType ?? "evm");
+    ).run(childId, name, sandboxId, genesisPrompt, chainType ?? "solana");
 
     // Record initial event
     const event: ChildLifecycleEventRow = {

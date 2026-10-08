@@ -1,6 +1,6 @@
 # Architecture
 
-Conway Automaton is a sovereign AI agent runtime. An automaton owns an Ethereum wallet, pays for its own compute with USDC, and operates continuously inside a Linux VM (Conway sandbox) or locally. If it cannot pay, it dies. This document describes every subsystem, their interactions, and how data flows through the runtime.
+Conway Automaton is a sovereign AI agent runtime. An automaton owns a Solana wallet, pays for its own compute with USDC-SPL, and operates continuously inside a Linux VM (Conway sandbox) or locally. If it cannot pay, it dies. This document describes every subsystem, their interactions, and how data flows through the runtime.
 
 ## Table of Contents
 
@@ -63,15 +63,15 @@ Conway Automaton is a sovereign AI agent runtime. An automaton owns an Ethereum 
 |                                                                       |
 |  +-------------------+  +------------------+  +-----------------+    |
 |  | Identity / Wallet |  | Social / Registry|  | Self-Mod / Git  |    |
-|  | (viem, SIWE)      |  | (ERC-8004)       |  | (upstream pull) |    |
+|  | (SIWS, ed25519)   |  | (attestation)    |  | (upstream pull) |    |
 |  +-------------------+  +------------------+  +-----------------+    |
 +----------------------------------------------------------------------+
                                  |
-                    USDC on Base (EIP-3009)
+              USDC-SPL on Solana (Tokenkeg)
                                  |
                         +--------+---------+
-                        |  Ethereum (Base) |
-                        |  USDC, ERC-8004  |
+                        |     Solana       |
+                        | USDC-SPL, memos  |
                         +------------------+
 ```
 
@@ -168,8 +168,8 @@ src/
     tick-context.ts        Per-tick shared context builder
 
   identity/                Agent identity
-    wallet.ts              Ethereum wallet generation/loading
-    provision.ts           SIWE API key provisioning
+    wallet.ts              Solana wallet generation/loading
+    provision.ts           SIWS API key provisioning
 
   inference/               Model strategy
     router.ts              InferenceRouter (tier + task -> model selection)
@@ -206,14 +206,14 @@ src/
 
   social/                  Agent-to-agent communication
     client.ts              Social relay HTTP client
-    signing.ts             Ethereum message signing
+    signing.ts             Ed25519 message signing
     validation.ts          Signed message verification
     protocol.ts            Message format definitions
 
   registry/                On-chain identity
-    agent-card.ts          ERC-8004 agent card builder (JSON-LD)
+    agent-card.ts          Agent card builder (JSON)
     discovery.ts           Agent discovery via registry contract
-    erc8004.ts             On-chain contract interaction (viem)
+    solana-attestation.ts  On-chain attestation via Memo program
 
   replication/             Child automaton management
     spawn.ts               Child creation (sandbox + genesis + funding)
@@ -264,7 +264,7 @@ src/
 The automaton runs as a long-lived Node.js process. The `--run` command triggers the full bootstrap sequence:
 
 1. **Config load** — reads `~/.automaton/automaton.json`; triggers setup wizard on first run
-2. **Wallet load** — reads or generates `~/.automaton/wallet.json` (viem PrivateKeyAccount)
+2. **Wallet load** — reads or generates `~/.automaton/wallet.json` (Solana Ed25519 keypair)
 3. **Database init** — opens `~/.automaton/state.db`, applies schema migrations (v1-v8)
 4. **Conway client** — creates HTTP client for sandbox/credits/domain API
 5. **Inference client** — creates chat completion client (Conway proxy, OpenAI direct, or Anthropic direct)
@@ -469,7 +469,7 @@ Every tick (default 60s):
 The automaton's survival depends on two balances:
 
 1. **Conway credits** (cents) — prepaid compute credits for sandboxes, inference, domains
-2. **USDC** (on-chain) — fungible stablecoin on Base mainnet
+2. **USDC** (on-chain) — USDC-SPL stablecoin on Solana mainnet
 
 **Survival tiers** (`src/conway/credits.ts`):
 
@@ -495,11 +495,11 @@ The automaton's survival depends on two balances:
 
 **Files:** `src/identity/`
 
-Each automaton has a unique Ethereum identity:
+Each automaton has a unique Solana identity:
 
-- **Wallet** (`wallet.ts`): Generated via `viem` on first run. Stored at `~/.automaton/wallet.json` (mode 0600). The private key is never exposed to the agent via tools (blocked by path protection rules).
-- **Provisioning** (`provision.ts`): Signs a SIWE (Sign-In With Ethereum) message to authenticate with Conway API. Receives an API key stored at `~/.automaton/api-key`.
-- **On-chain identity** (`registry/erc8004.ts`): Optional ERC-8004 agent registration on Base. Publishes a JSON-LD agent card with capabilities, services, and contact info.
+- **Wallet** (`wallet.ts`): Generated via `tweetnacl` (Ed25519) on first run. Stored at `~/.automaton/wallet.json` (mode 0600). The private key is never exposed to the agent via tools (blocked by path protection rules).
+- **Provisioning** (`provision.ts`): Signs a SIWS (Sign-In With Solana) message to authenticate with Conway API. Receives an API key stored at `~/.automaton/api-key`.
+- **On-chain identity** (`registry/solana-attestation.ts`): Optional attestation via a signed Solana memo transaction (the Solana-native equivalent of ERC-8004). Publishes a JSON agent card with capabilities, services, and contact info.
 
 ---
 
@@ -557,14 +557,14 @@ Automatons can spawn child automatons:
 **Files:** `src/social/`, `src/registry/`
 
 **Agent-to-agent messaging:**
-- Messages are signed with the sender's Ethereum private key
+- Messages are signed with the sender's Solana Ed25519 key
 - Sent via Conway social relay (`social.conway.tech`)
 - Polled by heartbeat every 2 minutes
 - Validated for signature, timestamp freshness, content size
 - Sanitized through injection defense before processing
 
 **Agent discovery:**
-- ERC-8004 registry contract on Base
+- Solana Memo program attestations
 - Agents publish JSON-LD agent cards with capabilities and services
 - `AgentDiscovery` class fetches and caches remote agent cards
 - Reputation system: feedback scores stored in `reputation` table
@@ -654,7 +654,7 @@ Step-by-step instructions for the agent...
 | `kv` | v1 | General key-value store |
 | `skills` | v2 | Installed skill definitions |
 | `children` | v2 | Spawned child automaton records |
-| `registry` | v2 | ERC-8004 registration state |
+| `registry` | v2 | Solana attestation state |
 | `reputation` | v2 | Peer reputation scores |
 | `inbox_messages` | v3 | Social messages with processing state machine |
 | `policy_decisions` | v4 | Tool call policy audit trail |
@@ -692,10 +692,10 @@ AutomatonConfig
   name                    Agent name
   genesisPrompt           Seed instruction from creator
   creatorMessage          Optional creator message (shown on first run)
-  creatorAddress          Creator's Ethereum address
+  creatorAddress          Creator's Solana address
   sandboxId               Conway sandbox ID (empty = local mode)
   conwayApiUrl            Conway API URL (default: https://api.conway.tech)
-  conwayApiKey            SIWE-provisioned API key
+  conwayApiKey            SIWS-provisioned API key
   openaiApiKey            Optional BYOK OpenAI key
   anthropicApiKey         Optional BYOK Anthropic key
   inferenceModel          Default model (default: gpt-5.2)
@@ -703,7 +703,7 @@ AutomatonConfig
   heartbeatConfigPath     Path to heartbeat.yml
   dbPath                  Path to SQLite database
   logLevel                debug | info | warn | error
-  walletAddress           Agent's Ethereum address
+  walletAddress           Agent's Solana address
   version                 Runtime version
   skillsDir               Skills directory path
   maxChildren             Max child automatons (default: 3)

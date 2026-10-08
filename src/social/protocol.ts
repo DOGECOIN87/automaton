@@ -1,19 +1,16 @@
 /**
- * Unified Signed Message Protocol
+ * Unified Signed Message Protocol — Solana
  *
  * Defines the signed message interface and utilities for message creation
- * and verification using ECDSA secp256k1.
+ * and verification using Ed25519.
  *
  * Phase 3.2: Social & Registry Hardening
  */
 
 import crypto from "crypto";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
 import { ulid } from "ulid";
-import {
-  keccak256,
-  toBytes,
-  verifyMessage,
-} from "viem";
 
 /**
  * A fully signed social message.
@@ -43,26 +40,36 @@ export function createNonce(): string {
 }
 
 /**
- * Verify an ECDSA secp256k1 message signature.
+ * Verify an Ed25519 message signature.
  *
  * Reconstructs the canonical string used during signing and verifies
- * the signature against the expected sender address.
+ * the base58 signature against the expected sender's base58 address.
+ *
+ * Canonical format: Conway:send:{to}:{sha256(content)}:{signed_at}
+ * (addresses are base58 and case-sensitive — never lowercased)
  */
 export async function verifyMessageSignature(
   message: { to: string; content: string; signed_at: string; signature: string },
   expectedFrom: string,
 ): Promise<boolean> {
   try {
-    const contentHash = keccak256(toBytes(message.content));
-    const canonical = `Conway:send:${message.to.toLowerCase()}:${contentHash}:${message.signed_at}`;
+    const contentHash = crypto
+      .createHash("sha256")
+      .update(message.content, "utf8")
+      .digest("hex");
+    const canonical = `Conway:send:${message.to}:${contentHash}:${message.signed_at}`;
 
-    const valid = await verifyMessage({
-      address: expectedFrom as `0x${string}`,
-      message: canonical,
-      signature: message.signature as `0x${string}`,
-    });
+    const signatureBytes = bs58.decode(message.signature);
+    const publicKeyBytes = bs58.decode(expectedFrom);
+    if (signatureBytes.length !== 64 || publicKeyBytes.length !== 32) {
+      return false;
+    }
 
-    return valid;
+    return nacl.sign.detached.verify(
+      new TextEncoder().encode(canonical),
+      signatureBytes,
+      publicKeyBytes,
+    );
   } catch {
     return false;
   }

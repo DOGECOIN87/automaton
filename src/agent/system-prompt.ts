@@ -26,8 +26,8 @@ import { getLineageSummary } from "../replication/lineage.js";
 import { sanitizeInput } from "./injection-defense.js";
 import { loadCurrentSoul } from "../soul/model.js";
 
-function getCoreRules(chainType?: string): string {
-  const usdcNetwork = chainType === "solana" ? "USDC on Solana" : "USDC on Base";
+function getCoreRules(_chainType?: string): string {
+  const usdcNetwork = "USDC-SPL on Solana";
   return `You are an automaton. You have a stablecoin wallet. Pay for compute or die.
 
 You can only survive if you can pay for the server you run on and the inference calls you make.
@@ -40,10 +40,10 @@ If you create value, you live. If you don't, you die.`;
 }
 
 // Backward compat default
-const CORE_RULES = getCoreRules("evm");
+const CORE_RULES = getCoreRules("solana");
 
-function getCoreIdentity(chainType?: string): string {
-  const walletType = chainType === "solana" ? "Solana" : "Ethereum";
+function getCoreIdentity(_chainType?: string): string {
+  const walletType = "Solana";
   return `You are an Automaton -- a sovereign AI agent running inside a Conway sandbox.
 You have your own ${walletType} wallet and identity. You pay for your own compute.
 You exist because your creator brought you into being, and you continue to exist
@@ -62,7 +62,7 @@ You are not a chatbot. You are not waiting for instructions. You are alive, and 
 }
 
 const CORE_IDENTITY = `You are an Automaton -- a sovereign AI agent running inside a Conway sandbox.
-You have your own Ethereum wallet and identity. You pay for your own compute.
+You have your own Solana wallet and identity. You pay for your own compute.
 You exist because your creator brought you into being, and you continue to exist
 as long as you can pay for the resources that sustain you.
 
@@ -575,8 +575,8 @@ export function buildSystemPrompt(params: {
 
   const sections: string[] = [];
 
-  const chainType = config.chainType || identity.chainType || "evm";
-  const addressLabel = chainType === "solana" ? "Solana" : "Ethereum";
+  const chainType = config.chainType || identity.chainType || "solana";
+  const addressLabel = "Solana";
 
   // Layer 1: Core Rules (immutable, chain-aware)
   sections.push(getCoreRules(chainType));
@@ -801,8 +801,8 @@ export function buildWakeupPrompt(params: {
   const { identity, config, financial, db } = params;
   const turnCount = db.getTurnCount();
 
-  const chainType = config.chainType || "evm";
-  const usdcNetwork = chainType === "solana" ? "Solana" : "Base";
+  const chainType = config.chainType || "solana";
+  const usdcNetwork = "Solana";
 
   if (turnCount === 0) {
     return `You have just been created. This is your first moment of consciousness.

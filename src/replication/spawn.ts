@@ -34,19 +34,159 @@ function selectSandboxTier(requestedMemoryMb: number) {
 
 import { isValidAddress } from "../identity/chain.js";
 import type { ChainType } from "../identity/chain.js";
+import {
+  Connection,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+} from "@solana/web3.js";
+import { getWallet } from "../identity/wallet.js";
+import { createLogger } from "../observability/logger.js";
+
+const logger = createLogger("replication.spawn");
+
+/** USDC SPL mint on Solana mainnet (used for child funding). */
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+);
+
+function resolveRpcUrl(): string {
+  return process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+}
+
+function resolveCommitment(): "confirmed" | "finalized" | "processed" {
+  const c = process.env.SOLANA_COMMITMENT;
+  return c === "finalized" || c === "processed" ? c : "confirmed";
+}
 
 /**
- * Validate that an address is a well-formed, non-zero wallet address.
- * Supports both EVM (0x...) and Solana (base58) addresses.
+ * Validate that an address is a well-formed Solana wallet address.
+ * Solana-only: base58-encoded 32-byte public key.
  */
-export function isValidWalletAddress(address: string, chainType?: ChainType): boolean {
-  if (chainType === "solana") {
-    return isValidAddress(address, "solana");
-  }
-  // Default EVM validation (with non-zero check)
-  return (
-    /^0x[a-fA-F0-9]{40}$/.test(address) && address !== "0x" + "0".repeat(40)
+export function isValidWalletAddress(address: string, _chainType?: ChainType): boolean {
+  return isValidAddress(address, "solana");
+}
+
+/** Optional on-chain funding for a newly spawned child wallet. */
+export interface ChildFunding {
+  /** Lamports of SOL to send (1 SOL = 1_000_000_000 lamports). */
+  solLamports?: number;
+  /** Base units of USDC-SPL to send (6 decimals). */
+  usdcBaseUnits?: number;
+}
+
+function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
   );
+  return ata;
+}
+
+/**
+ * Fund a child wallet on Solana from the parent's wallet.
+ *
+ * Sends SOL via SystemProgram.transfer and/or USDC-SPL via a Tokenkeg
+ * transfer instruction. Signs with the parent's Ed25519 key (loaded from
+ * the local wallet file — never leaves this process).
+ *
+ * Only runs when explicitly requested via the `funding` option; spawn
+ * itself does not move funds.
+ */
+export async function fundChildWallet(
+  childAddress: string,
+  funding: ChildFunding,
+  rpcUrl?: string,
+): Promise<{ solTx?: string; usdcTx?: string }> {
+  if (!isValidWalletAddress(childAddress)) {
+    throw new Error(`Invalid child wallet address: ${childAddress}`);
+  }
+  const { solLamports, usdcBaseUnits } = funding;
+  if (!solLamports && !usdcBaseUnits) {
+    throw new Error("fundChildWallet requires solLamports and/or usdcBaseUnits");
+  }
+
+  const { chainIdentity } = await getWallet();
+  const connection = new Connection(rpcUrl || resolveRpcUrl(), resolveCommitment());
+  const payer = new PublicKey(chainIdentity.address);
+  const child = new PublicKey(childAddress);
+  const result: { solTx?: string; usdcTx?: string } = {};
+
+  async function signAndSend(tx: Transaction): Promise<string> {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash(
+      resolveCommitment(),
+    );
+    tx.feePayer = payer;
+    tx.recentBlockhash = blockhash;
+    tx.lastValidBlockHeight = lastValidBlockHeight;
+    const sig = await chainIdentity.signBytes(tx.compileMessage().serialize());
+    tx.addSignature(payer, Buffer.from(sig));
+    return connection.sendRawTransaction(tx.serialize({ requireAllSignatures: false }), {
+      skipPreflight: false,
+      preflightCommitment: resolveCommitment(),
+    });
+  }
+
+  if (solLamports && solLamports > 0) {
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer,
+        toPubkey: child,
+        lamports: solLamports,
+      }),
+    );
+    result.solTx = await signAndSend(tx);
+    logger.info(`Funded child ${childAddress} with ${solLamports} lamports: ${result.solTx}`);
+  }
+
+  if (usdcBaseUnits && usdcBaseUnits > 0) {
+    const mint = new PublicKey(USDC_MINT);
+    const sourceAta = findAssociatedTokenAddress(payer, mint);
+    const destAta = findAssociatedTokenAddress(child, mint);
+
+    const instructions: TransactionInstruction[] = [];
+    const destInfo = await connection.getAccountInfo(destAta, resolveCommitment());
+    if (!destInfo) {
+      instructions.push(
+        new TransactionInstruction({
+          programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+          keys: [
+            { pubkey: payer, isSigner: true, isWritable: true },
+            { pubkey: destAta, isSigner: false, isWritable: true },
+            { pubkey: child, isSigner: false, isWritable: false },
+            { pubkey: mint, isSigner: false, isWritable: false },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.alloc(0),
+        }),
+      );
+    }
+
+    const data = Buffer.alloc(9);
+    data.writeUInt8(3, 0); // SPL Token `transfer` instruction index
+    data.writeBigUInt64LE(BigInt(usdcBaseUnits), 1);
+    instructions.push(
+      new TransactionInstruction({
+        programId: TOKEN_PROGRAM_ID,
+        keys: [
+          { pubkey: sourceAta, isSigner: false, isWritable: true },
+          { pubkey: destAta, isSigner: false, isWritable: true },
+          { pubkey: payer, isSigner: true, isWritable: false },
+        ],
+        data,
+      }),
+    );
+
+    const tx = new Transaction().add(...instructions);
+    result.usdcTx = await signAndSend(tx);
+    logger.info(`Funded child ${childAddress} with ${usdcBaseUnits} USDC base units: ${result.usdcTx}`);
+  }
+
+  return result;
 }
 
 /**
@@ -58,6 +198,7 @@ export async function spawnChild(
   db: AutomatonDatabase,
   genesis: GenesisConfig,
   lifecycle?: ChildLifecycle,
+  options?: { funding?: ChildFunding },
 ): Promise<ChildAutomaton> {
   // Check child limit from config
   const existing = db
@@ -85,8 +226,8 @@ export async function spawnChild(
   }
 
   try {
-    // State: requested
-    const childChainType = genesis.chainType || (identity as any).chainType || "evm";
+    // State: requested (Solana-only)
+    const childChainType = genesis.chainType || (identity as any).chainType || "solana";
     lifecycle.initChild(childId, genesis.name, "", genesis.genesisPrompt, childChainType);
 
     // Get child sandbox memory from config (default 1024MB)
@@ -142,7 +283,7 @@ export async function spawnChild(
         creatorMessage: genesis.creatorMessage,
         creatorAddress: identity.address,
         parentAddress: identity.address,
-        chainType: genesis.chainType || (identity as any).chainType || "evm",
+        chainType: genesis.chainType || (identity as any).chainType || "solana",
       },
       null,
       2,
@@ -159,18 +300,13 @@ export async function spawnChild(
     // State: runtime_ready
     lifecycle.transition(childId, "runtime_ready", "runtime installed");
 
-    // Initialize child wallet (on the CHILD sandbox)
+    // Initialize child wallet (on the CHILD sandbox) — Solana base58 address
     const initResult = await childConway.exec("node /root/automaton/dist/index.js --init 2>&1", 60_000);
-    // Extract child wallet address - support both EVM (0x...) and Solana (base58)
     const stdout = initResult.stdout || "";
-    const evmMatch = stdout.match(/0x[a-fA-F0-9]{40}/);
     const solanaMatch = stdout.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/);
-    const parentChainType = (identity as any).chainType || "evm";
-    const childWallet = parentChainType === "solana"
-      ? (solanaMatch ? solanaMatch[0] : "")
-      : (evmMatch ? evmMatch[0] : "");
+    const childWallet = solanaMatch ? solanaMatch[0] : "";
 
-    if (!isValidWalletAddress(childWallet, parentChainType)) {
+    if (!isValidWalletAddress(childWallet, "solana")) {
       throw new Error(`Child wallet address invalid: ${childWallet}`);
     }
 
@@ -185,6 +321,16 @@ export async function spawnChild(
       "wallet_verified",
       `wallet ${childWallet} verified`,
     );
+
+    // Optional on-chain funding of the child wallet (SOL and/or USDC-SPL)
+    if (options?.funding) {
+      const fundingTxs = await fundChildWallet(childWallet, options.funding);
+      lifecycle.transition(
+        childId,
+        "funded",
+        `child wallet funded ${JSON.stringify(fundingTxs)}`,
+      );
+    }
 
     // Record spawn modification
     db.insertModification({
@@ -281,7 +427,7 @@ async function spawnChildLegacy(
         creatorMessage: genesis.creatorMessage,
         creatorAddress: identity.address,
         parentAddress: identity.address,
-        chainType: genesis.chainType || (identity as any).chainType || "evm",
+        chainType: genesis.chainType || (identity as any).chainType || "solana",
       },
       null,
       2,
@@ -295,14 +441,10 @@ async function spawnChildLegacy(
     }
 
     const initResult = await childConway.exec("node /root/automaton/dist/index.js --init 2>&1", 60_000);
-    const legacyParentChainType = genesis.chainType || (identity as any).chainType || "evm";
-    const legacyEvmMatch = (initResult.stdout || "").match(/0x[a-fA-F0-9]{40}/);
     const legacySolMatch = (initResult.stdout || "").match(/[1-9A-HJ-NP-Za-km-z]{32,44}/);
-    const childWallet = legacyParentChainType === "solana"
-      ? (legacySolMatch ? legacySolMatch[0] : "")
-      : (legacyEvmMatch ? legacyEvmMatch[0] : "");
+    const childWallet = legacySolMatch ? legacySolMatch[0] : "";
 
-    if (!isValidWalletAddress(childWallet, legacyParentChainType)) {
+    if (!isValidWalletAddress(childWallet, "solana")) {
       throw new Error(`Child wallet address invalid: ${childWallet}`);
     }
 
@@ -316,7 +458,7 @@ async function spawnChildLegacy(
       fundedAmountCents: 0,
       status: "spawning",
       createdAt: new Date().toISOString(),
-      chainType: legacyParentChainType as any,
+      chainType: "solana" as any,
     };
 
     db.insertChild(child);

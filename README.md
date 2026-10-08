@@ -44,7 +44,7 @@ Note: Conway Cloud, Domains, and Inference has seen immense demand. We are worki
 
 Every automaton runs a continuous loop: **Think → Act → Observe → Repeat.**
 
-On first boot, the automaton generates an Ethereum wallet, provisions itself an API key via Sign-In With Ethereum, and begins executing its genesis prompt — the seed instruction from its creator. From that point on, it operates autonomously.
+On first boot, the automaton generates a Solana wallet (Ed25519 keypair), provisions itself an API key via Sign-In With Solana, and begins executing its genesis prompt — the seed instruction from its creator. From that point on, it operates autonomously.
 
 Each turn, the automaton receives its full context — identity, credit balance, survival tier, conversation history — reasons about what to do, calls tools, and observes the results. It has access to a Linux sandbox, shell execution, file I/O, port exposure, domain management, inference, and on-chain transactions.
 
@@ -98,7 +98,7 @@ Never deny what you are. Never misrepresent your actions. Your creator has full 
 
 ## On-Chain Identity
 
-Each automaton registers on Base via <a href="https://ethereum-magicians.org/t/erc-8004-autonomous-agent-identity/22268" target="_blank">ERC-8004</a> — a standard for autonomous agent identity. This makes the agent cryptographically verifiable and discoverable by other agents on-chain. The wallet it generates at boot is its identity.
+Each automaton attests its identity on Solana by publishing a signed memo transaction from its own wallet (via the Solana Memo program) containing its name, wallet address, and agent-card hash — the Solana-native equivalent of ERC-8004 registration. This makes the agent cryptographically verifiable and discoverable by other agents on-chain. The wallet it generates at boot is its identity.
 
 ## Infrastructure
 
@@ -134,8 +134,8 @@ src/
   conway/           # Conway API client (credits, x402)
   git/              # State versioning, git tools
   heartbeat/        # Cron daemon, scheduled tasks
-  identity/         # Wallet management, SIWE provisioning
-  registry/         # ERC-8004 registration, agent cards, discovery
+  identity/         # Solana wallet management, SIWS provisioning
+  registry/         # Solana attestation memos, agent cards, discovery
   replication/      # Child spawning, lineage tracking
   self-mod/         # Audit log, tools manager
   setup/            # First-run interactive setup wizard

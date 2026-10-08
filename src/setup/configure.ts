@@ -303,7 +303,13 @@ async function configureGeneral(config: AutomatonConfig): Promise<void> {
   );
   config.maxChildren = await askNumber("Max child automatons", config.maxChildren);
   config.socialRelayUrl = (await askString("Social relay URL", config.socialRelayUrl)) || undefined;
-  config.rpcUrl = (await askString("RPC endpoint  (Base chain, e.g. https://mainnet.base.org)", config.rpcUrl)) || undefined;
+  config.rpcUrl = (await askString("RPC endpoint  (Solana, e.g. https://api.mainnet-beta.solana.com)", config.rpcUrl)) || undefined;
+  config.solanaRpcUrl = (await askString("Solana RPC URL", config.solanaRpcUrl)) || config.solanaRpcUrl;
+  config.solanaCommitment = (await askChoice(
+    "Solana commitment",
+    ["confirmed", "finalized", "processed"] as const,
+    config.solanaCommitment || "confirmed",
+  )) as AutomatonConfig["solanaCommitment"];
 
   console.log("");
 }

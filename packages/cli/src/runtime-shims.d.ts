@@ -56,3 +56,41 @@ declare module "@conway/automaton/state/database.js" {
 
   export function createDatabase(path: string): AutomatonCliDatabase;
 }
+
+declare module "@conway/automaton/identity/chain.js" {
+  export type ChainType = "solana";
+  export interface ChainIdentity {
+    readonly chainType: ChainType;
+    readonly address: string;
+    signMessage(message: string): Promise<string>;
+    signBytes(bytes: Uint8Array): Promise<Uint8Array>;
+  }
+  export function isValidSolanaAddress(address: string): boolean;
+  export class SolanaChainIdentity implements ChainIdentity {
+    readonly chainType: ChainType;
+    readonly address: string;
+    constructor(secretKey: Uint8Array);
+    signMessage(message: string): Promise<string>;
+    signBytes(bytes: Uint8Array): Promise<Uint8Array>;
+    getSecretKey(): Uint8Array;
+    getPublicKey(): Uint8Array;
+  }
+}
+
+declare module "@conway/automaton/social/signing.js" {
+  import type { ChainIdentity } from "@conway/automaton/identity/chain.js";
+  export interface SignedMessagePayload {
+    from: string;
+    to: string;
+    content: string;
+    signed_at: string;
+    signature: string;
+    reply_to?: string;
+  }
+  export function signSendPayload(
+    signer: ChainIdentity,
+    to: string,
+    content: string,
+    replyTo?: string,
+  ): Promise<SignedMessagePayload>;
+}

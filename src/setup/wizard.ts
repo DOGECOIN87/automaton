@@ -18,25 +18,17 @@ import {
 } from "./prompts.js";
 import { detectEnvironment } from "./environment.js";
 import { generateSoulMd, installDefaultSkills } from "./defaults.js";
-import type { ChainType } from "../identity/chain.js";
 
 export async function runSetupWizard(): Promise<AutomatonConfig> {
   showBanner();
 
   console.log(chalk.white("  First-run setup. Let's bring your automaton to life.\n"));
 
-  // ─── 1. Chain selection + wallet ──────────────────────────────
-  console.log(chalk.cyan("  [1/6] Chain selection & identity (wallet)..."));
-  let selectedChain: ChainType = "evm";
-  const chainInput = await promptOptional("Chain type (evm or solana) [evm]");
-  if (chainInput && chainInput.toLowerCase() === "solana") {
-    selectedChain = "solana";
-    console.log(chalk.green("  Chain: Solana (Ed25519)\n"));
-  } else {
-    console.log(chalk.green("  Chain: EVM (secp256k1)\n"));
-  }
+  // ─── 1. Wallet (Solana) ───────────────────────────────────────
+  console.log(chalk.cyan("  [1/6] Identity (Solana wallet)..."));
+  console.log(chalk.green("  Chain: Solana (Ed25519)\n"));
 
-  const { account, chainIdentity, chainType: walletChainType, isNew } = await getWallet(selectedChain);
+  const { account, chainIdentity, chainType: walletChainType, isNew } = await getWallet("solana");
   const walletAddress = chainIdentity.address;
   if (isNew) {
     console.log(chalk.green(`  Wallet created: ${walletAddress}`));
@@ -46,13 +38,10 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
   console.log(chalk.dim(`  Private key stored at: ${getAutomatonDir()}/wallet.json\n`));
 
   // ─── 2. Provision API key ─────────────────────────────────────
-  const provisionLabel = walletChainType === "solana"
-    ? "  [2/6] Provisioning Conway API key (SIWS)..."
-    : "  [2/6] Provisioning Conway API key (SIWE)...";
-  console.log(chalk.cyan(provisionLabel));
+  console.log(chalk.cyan("  [2/6] Provisioning Conway API key (SIWS)..."));
   let apiKey = "";
   try {
-    const result = await provision(undefined, walletChainType === "solana" ? chainIdentity : undefined);
+    const result = await provision(undefined, chainIdentity);
     apiKey = result.apiKey;
     console.log(chalk.green(`  API key provisioned: ${result.keyPrefix}...\n`));
   } catch (err: any) {
@@ -90,10 +79,7 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
 
   console.log(chalk.dim(`  Your automaton's address is ${walletAddress}`));
   console.log(chalk.dim("  Now enter YOUR wallet address (the human creator/owner).\n"));
-  const creatorAddressLabel = walletChainType === "solana"
-    ? "Creator wallet address (base58)"
-    : "Creator wallet address (0x...)";
-  const creatorAddress = await promptAddress(creatorAddressLabel, walletChainType);
+  const creatorAddress = await promptAddress("Creator wallet address (base58)", walletChainType);
   console.log(chalk.green(`  Creator: ${creatorAddress}\n`));
 
   console.log(chalk.white("  Optional: bring your own inference provider keys (press Enter to skip)."));
@@ -205,16 +191,16 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
 
   // ─── 6. Funding guidance ──────────────────────────────────────
   console.log(chalk.cyan("  [6/6] Funding\n"));
-  showFundingPanel(walletAddress, walletChainType);
+  showFundingPanel(walletAddress);
 
   closePrompts();
 
   return config;
 }
 
-function showFundingPanel(address: string, chainType: ChainType = "evm"): void {
+function showFundingPanel(address: string): void {
   const short = `${address.slice(0, 6)}...${address.slice(-5)}`;
-  const usdcNetwork = chainType === "solana" ? "Solana" : "Base";
+  const explorerUrl = `https://solscan.io/account/${address}`;
   const w = 58;
   const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
 
@@ -222,12 +208,13 @@ function showFundingPanel(address: string, chainType: ChainType = "evm"): void {
   console.log(chalk.cyan(`  │${pad("  Fund your automaton", w)}│`));
   console.log(chalk.cyan(`  │${" ".repeat(w)}│`));
   console.log(chalk.cyan(`  │${pad(`  Address: ${short}`, w)}│`));
-  console.log(chalk.cyan(`  │${pad(`  Chain: ${chainType === "solana" ? "Solana" : "EVM (Base)"}`, w)}│`));
+  console.log(chalk.cyan(`  │${pad("  Chain: Solana", w)}│`));
+  console.log(chalk.cyan(`  │${pad(`  Explorer: ${explorerUrl.slice(0, w - 14)}`, w)}│`));
   console.log(chalk.cyan(`  │${" ".repeat(w)}│`));
   console.log(chalk.cyan(`  │${pad("  1. Transfer Conway credits", w)}│`));
   console.log(chalk.cyan(`  │${pad("     conway credits transfer <address> <amount>", w)}│`));
   console.log(chalk.cyan(`  │${" ".repeat(w)}│`));
-  console.log(chalk.cyan(`  │${pad(`  2. Send USDC on ${usdcNetwork} to the address above`, w)}│`));
+  console.log(chalk.cyan(`  │${pad("  2. Send SOL or USDC-SPL to the address above", w)}│`));
   console.log(chalk.cyan(`  │${" ".repeat(w)}│`));
   console.log(chalk.cyan(`  │${pad("  3. Fund via Conway Cloud dashboard", w)}│`));
   console.log(chalk.cyan(`  │${pad("     https://app.conway.tech", w)}│`));

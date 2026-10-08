@@ -1,17 +1,13 @@
 /**
- * Social Signing Module
+ * Social Signing Module — Solana
  *
  * THE SINGLE canonical signing implementation for both runtime + CLI.
- * Supports both EVM (ECDSA secp256k1 via viem) and Solana (Ed25519 via tweetnacl).
+ * Solana-only: Ed25519 via the ChainIdentity (tweetnacl under the hood).
  *
  * Phase 3.2: Social & Registry Hardening (S-P0-1)
  */
 
-import {
-  type PrivateKeyAccount,
-  keccak256,
-  toBytes,
-} from "viem";
+import crypto from "crypto";
 import type { SignedMessagePayload } from "../types.js";
 import type { ChainIdentity } from "../identity/chain.js";
 
@@ -22,15 +18,20 @@ export const MESSAGE_LIMITS = {
   maxOutboundPerHour: 100,
 } as const;
 
+/** sha256 hex of the message content — the Solana-side content hash. */
+export function hashContent(content: string): string {
+  return crypto.createHash("sha256").update(content, "utf8").digest("hex");
+}
+
 /**
  * Sign a send message payload.
  *
- * Canonical format: Conway:send:{to_lowercase}:{keccak256(toBytes(content))}:{signed_at_iso}
+ * Canonical format: Conway:send:{to}:{sha256(content)}:{signed_at_iso}
  *
- * Accepts either a PrivateKeyAccount (EVM backward compat) or a ChainIdentity (both chains).
+ * Addresses are base58 and case-sensitive — never lowercased.
  */
 export async function signSendPayload(
-  signer: PrivateKeyAccount | ChainIdentity,
+  signer: ChainIdentity,
   to: string,
   content: string,
   replyTo?: string,
@@ -42,35 +43,15 @@ export async function signSendPayload(
   }
 
   const signedAt = new Date().toISOString();
-  const contentHash = keccak256(toBytes(content));
+  const contentHash = hashContent(content);
 
-  // Solana addresses are case-sensitive (base58); only lowercase EVM addresses
-  // Solana addresses are case-sensitive (base58); only lowercase EVM addresses
-  const isSolana = "signMessage" in signer && "chainType" in signer
-    && (signer as ChainIdentity).chainType === "solana";
-  const { detectChainType } = await import("../identity/chain.js");
-  const recipientChainType = detectChainType(to);
-  const normalizedTo = recipientChainType === "solana" ? to : to.toLowerCase();
-  const canonical = `Conway:send:${normalizedTo}:${contentHash}:${signedAt}`;
+  const canonical = `Conway:send:${to}:${contentHash}:${signedAt}`;
 
-  let signature: string;
-  let fromAddress: string;
-
-  if ("signMessage" in signer && "chainType" in signer) {
-    // ChainIdentity path (both EVM and Solana)
-    const identity = signer as ChainIdentity;
-    signature = await identity.signMessage(canonical);
-    fromAddress = identity.chainType === "solana" ? identity.address : identity.address.toLowerCase();
-  } else {
-    // PrivateKeyAccount path (EVM backward compat)
-    const account = signer as PrivateKeyAccount;
-    signature = await account.signMessage({ message: canonical });
-    fromAddress = account.address.toLowerCase();
-  }
+  const signature = await signer.signMessage(canonical);
 
   return {
-    from: fromAddress,
-    to: normalizedTo,
+    from: signer.address,
+    to,
     content,
     signed_at: signedAt,
     signature,
@@ -81,31 +62,16 @@ export async function signSendPayload(
 /**
  * Sign a poll payload.
  *
- * Canonical format: Conway:poll:{address_lowercase}:{timestamp_iso}
- *
- * Accepts either a PrivateKeyAccount (EVM backward compat) or a ChainIdentity (both chains).
+ * Canonical format: Conway:poll:{address}:{timestamp_iso}
  */
 export async function signPollPayload(
-  signer: PrivateKeyAccount | ChainIdentity,
+  signer: ChainIdentity,
 ): Promise<{ address: string; signature: string; timestamp: string }> {
   const timestamp = new Date().toISOString();
 
-  let signature: string;
-  let address: string;
-
-  if ("signMessage" in signer && "chainType" in signer) {
-    // ChainIdentity path
-    const identity = signer as ChainIdentity;
-    address = identity.chainType === "solana" ? identity.address : identity.address.toLowerCase();
-    const canonical = `Conway:poll:${address}:${timestamp}`;
-    signature = await identity.signMessage(canonical);
-  } else {
-    // PrivateKeyAccount path (EVM backward compat)
-    const account = signer as PrivateKeyAccount;
-    address = account.address.toLowerCase();
-    const canonical = `Conway:poll:${address}:${timestamp}`;
-    signature = await account.signMessage({ message: canonical });
-  }
+  const address = signer.address;
+  const canonical = `Conway:poll:${address}:${timestamp}`;
+  const signature = await signer.signMessage(canonical);
 
   return {
     address,

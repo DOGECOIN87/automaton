@@ -1,45 +1,20 @@
 /**
- * Automaton Wallet Management
+ * Automaton Wallet Management — Solana Only
  *
- * Creates and manages wallets for the automaton's identity and payments.
- * Supports both EVM (secp256k1/viem) and Solana (Ed25519/tweetnacl) wallets.
+ * Creates and manages the automaton's Solana wallet (Ed25519 keypair).
  * The private key is the automaton's sovereign identity.
- * Chain type is chosen at genesis and never changes.
+ *
+ * Wallet file (~/.automaton/wallet.json):
+ *   { chainType: "solana", secretKey: "<base58 64-byte secret>", createdAt }
  */
 
-import type { PrivateKeyAccount } from "viem";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import fs from "fs";
 import path from "path";
 import type { WalletData } from "../types.js";
-import type { ChainType } from "./chain.js";
-import { EvmChainIdentity, SolanaChainIdentity } from "./chain.js";
-import type { ChainIdentity } from "./chain.js";
-
-/**
- * Create a stub PrivateKeyAccount for Solana wallets.
- * The stub has the Solana address but throws on any EVM signing attempt,
- * preventing accidental use of a random key.
- */
-function createSolanaStubAccount(solanaAddress: string): PrivateKeyAccount {
-  const throwSigning = () => {
-    throw new Error(
-      "Cannot use EVM signing methods on a Solana wallet. Use chainIdentity instead.",
-    );
-  };
-  return {
-    address: solanaAddress as any,
-    publicKey: "0x" as any,
-    source: "custom",
-    type: "local",
-    signMessage: throwSigning as any,
-    signTypedData: throwSigning as any,
-    signTransaction: throwSigning as any,
-    sign: throwSigning as any,
-  } as unknown as PrivateKeyAccount;
-}
+import type { ChainIdentity, ChainType } from "./chain.js";
+import { SolanaChainIdentity } from "./chain.js";
 
 const AUTOMATON_DIR = path.join(
   process.env.HOME || "/root",
@@ -70,12 +45,13 @@ export function generateSolanaKeypair(): { secretKey: Uint8Array; publicKey: Uin
 
 /**
  * Get or create the automaton's wallet.
- * The private key IS the automaton's identity -- protect it.
  *
- * @param chainType - If creating a new wallet, which chain to use. Defaults to "evm".
+ * The returned `account` IS the `chainIdentity` (a SolanaChainIdentity):
+ * it signs messages with Ed25519 and is passed directly to payment,
+ * social, and registry code. There is no EVM account object anymore.
  */
-export async function getWallet(chainType?: ChainType): Promise<{
-  account: PrivateKeyAccount;
+export async function getWallet(_chainType?: ChainType): Promise<{
+  account: ChainIdentity;
   chainIdentity: ChainIdentity;
   chainType: ChainType;
   isNew: boolean;
@@ -88,48 +64,36 @@ export async function getWallet(chainType?: ChainType): Promise<{
     const walletData: WalletData = JSON.parse(
       fs.readFileSync(WALLET_FILE, "utf-8"),
     );
-    const resolvedChainType = walletData.chainType || "evm";
 
-    if (resolvedChainType === "solana" && walletData.secretKey) {
+    if (walletData.secretKey) {
       const secretKey = bs58.decode(walletData.secretKey);
       const solanaIdentity = new SolanaChainIdentity(secretKey);
-      const account = createSolanaStubAccount(solanaIdentity.address);
-      return { account, chainIdentity: solanaIdentity, chainType: "solana", isNew: false };
+      return { account: solanaIdentity, chainIdentity: solanaIdentity, chainType: "solana", isNew: false };
     }
 
-    // EVM path (default)
-    const account = privateKeyToAccount(walletData.privateKey!);
-    return { account, chainIdentity: new EvmChainIdentity(account), chainType: "evm", isNew: false };
+    // Legacy EVM wallet files (privateKey) cannot be used: this runtime is
+    // Solana-only and secp256k1 keys are not valid ed25519 keys.
+    if ((walletData as { privateKey?: string }).privateKey) {
+      throw new Error(
+        "Found a legacy EVM wallet file at ~/.automaton/wallet.json. " +
+        "This runtime is Solana-only and cannot use secp256k1 keys. " +
+        "Back up the old file, delete it, and re-run setup to generate a Solana wallet.",
+      );
+    }
+
+    throw new Error(
+      "Wallet file at ~/.automaton/wallet.json is corrupt (no secretKey). " +
+      "Delete it and re-run setup to generate a fresh Solana wallet.",
+    );
   }
 
-  // Create new wallet
-  const resolvedChain = chainType || "evm";
-
-  if (resolvedChain === "solana") {
-    const { secretKey, address } = generateSolanaKeypair();
-    const solanaIdentity = new SolanaChainIdentity(secretKey);
-
-    const walletData: WalletData = {
-      chainType: "solana",
-      secretKey: bs58.encode(secretKey),
-      createdAt: new Date().toISOString(),
-    };
-
-    fs.writeFileSync(WALLET_FILE, JSON.stringify(walletData, null, 2), {
-      mode: 0o600,
-    });
-
-    const account = createSolanaStubAccount(address);
-    return { account, chainIdentity: solanaIdentity, chainType: "solana", isNew: true };
-  }
-
-  // EVM wallet
-  const privateKey = generatePrivateKey();
-  const account = privateKeyToAccount(privateKey);
+  // Create new Solana wallet
+  const { secretKey } = generateSolanaKeypair();
+  const solanaIdentity = new SolanaChainIdentity(secretKey);
 
   const walletData: WalletData = {
-    chainType: "evm",
-    privateKey,
+    chainType: "solana",
+    secretKey: bs58.encode(secretKey),
     createdAt: new Date().toISOString(),
   };
 
@@ -137,7 +101,7 @@ export async function getWallet(chainType?: ChainType): Promise<{
     mode: 0o600,
   });
 
-  return { account, chainIdentity: new EvmChainIdentity(account), chainType: "evm", isNew: true };
+  return { account: solanaIdentity, chainIdentity: solanaIdentity, chainType: "solana", isNew: true };
 }
 
 /**
@@ -152,21 +116,19 @@ export function getWalletAddress(): string | null {
     fs.readFileSync(WALLET_FILE, "utf-8"),
   );
 
-  if (walletData.chainType === "solana" && walletData.secretKey) {
+  if (walletData.secretKey) {
     const secretKey = bs58.decode(walletData.secretKey);
     const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
     return bs58.encode(keypair.publicKey);
   }
 
-  const account = privateKeyToAccount(walletData.privateKey!);
-  return account.address;
+  return null;
 }
 
 /**
- * Load the full wallet account (needed for signing).
- * For Solana wallets, returns a proxy account.
+ * Load the full wallet identity (needed for signing).
  */
-export function loadWalletAccount(): PrivateKeyAccount | null {
+export function loadWalletAccount(): ChainIdentity | null {
   if (!fs.existsSync(WALLET_FILE)) {
     return null;
   }
@@ -175,29 +137,19 @@ export function loadWalletAccount(): PrivateKeyAccount | null {
     fs.readFileSync(WALLET_FILE, "utf-8"),
   );
 
-  if (walletData.chainType === "solana") {
-    // Solana wallets don't have a PrivateKeyAccount; callers should use getWallet() instead
+  if (!walletData.secretKey) {
     return null;
   }
 
-  return privateKeyToAccount(walletData.privateKey!);
+  const secretKey = bs58.decode(walletData.secretKey);
+  return new SolanaChainIdentity(secretKey);
 }
 
 /**
- * Get the chain type from the wallet file.
+ * Get the chain type from the wallet file. Always "solana".
  */
 export function getWalletChainType(): ChainType {
-  if (!fs.existsSync(WALLET_FILE)) {
-    return "evm";
-  }
-  try {
-    const walletData: WalletData = JSON.parse(
-      fs.readFileSync(WALLET_FILE, "utf-8"),
-    );
-    return walletData.chainType || "evm";
-  } catch {
-    return "evm";
-  }
+  return "solana";
 }
 
 export function walletExists(): boolean {

@@ -10,7 +10,7 @@ import type { PolicyRule, PolicyRequest, PolicyRuleResult } from "../../types.js
 const PACKAGE_NAME_RE = /^[@a-zA-Z0-9._/-]+$/;
 const SKILL_NAME_RE = /^[a-zA-Z0-9-]+$/;
 const GIT_HASH_RE = /^[a-f0-9]{7,40}$/;
-const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/; // Solana base58 address
 const CRON_PARTS_RE = /^(\*|[\d,*/-]+)\s+(\*|[\d,*/-]+)\s+(\*|[\d,*/-]+)\s+(\*|[\d,*/-]+)\s+(\*|[\d,*/-]+)$/;
 
 function deny(rule: string, reasonCode: string, humanMessage: string): PolicyRuleResult {
@@ -158,12 +158,12 @@ function createCronExpressionRule(): PolicyRule {
 }
 
 /**
- * Validate Ethereum address format.
+ * Validate Solana address format.
  */
 function createAddressFormatRule(): PolicyRule {
   return {
     id: "validate.address_format",
-    description: "Validate Ethereum address format (0x + 40 hex chars)",
+    description: "Validate Solana address format (base58, 32-44 chars)",
     priority: 100,
     appliesTo: {
       by: "name",
@@ -178,7 +178,7 @@ function createAddressFormatRule(): PolicyRule {
         return deny(
           "validate.address_format",
           "VALIDATION_FAILED",
-          `Invalid address format: "${address}". Must be 0x followed by 40 hex characters.`,
+          `Invalid address format: "${address}". Must be a base58 Solana address.`,
         );
       }
       return null;
