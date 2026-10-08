@@ -362,7 +362,7 @@ export async function spawnChild(
     );
 
     // Mandatory on-chain funding: each child gets CHILD_FUND_SOL (default
-    // 0.05) SOL from Matt's dedicated funding wallet — never from the
+    // 0.005) SOL from Matt's dedicated funding wallet — never from the
     // agent's own wallet. The funding gate above already verified sufficiency.
     const fundTx = await fundChildFromFundingWallet(childWallet);
     lifecycle.transition(

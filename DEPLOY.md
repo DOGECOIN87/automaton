@@ -69,7 +69,7 @@ docker run --rm -v automaton-data:/data alpine \
 ## 5. Fund the funding wallet (REQUIRED before any spawn)
 
 This is the dedicated wallet Matt funds personally. Every spawned child agent
-receives `CHILD_FUND_SOL` (default 0.05) SOL from it. **Spawning is refused**
+receives `CHILD_FUND_SOL` (default 0.005) SOL from it. **Spawning is refused**
 until this wallet exists and holds enough for at least one child allocation.
 
 **Funding wallet address (generated during deploy prep):**

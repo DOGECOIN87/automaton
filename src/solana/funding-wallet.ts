@@ -2,7 +2,7 @@
  * Funding Wallet — Solana-Only
  *
  * Matt personally funds ONE dedicated funding wallet. Every spawned child
- * agent receives a small amount of SOL from it (CHILD_FUND_SOL, default 0.05).
+ * agent receives a small amount of SOL from it (CHILD_FUND_SOL, default 0.005).
  * Spawn REFUSES to proceed when the funding wallet is missing or its balance
  * cannot cover the child's allocation plus a fee buffer.
  *
@@ -26,7 +26,7 @@ import { createLogger } from "../observability/logger.js";
 const logger = createLogger("solana.funding-wallet");
 
 /** Default per-child SOL allocation when CHILD_FUND_SOL is unset/invalid. */
-export const DEFAULT_CHILD_FUND_SOL = 0.05;
+export const DEFAULT_CHILD_FUND_SOL = 0.005;
 
 /** Lamports reserved for the funding transaction fee on top of the allocation. */
 export const FUNDING_FEE_BUFFER_LAMPORTS = 10_000; // 0.00001 SOL — generous for one transfer
@@ -81,7 +81,7 @@ function parseSecret(raw: string): Uint8Array {
   return bs58.decode(raw);
 }
 
-/** Per-child SOL allocation from CHILD_FUND_SOL env (default 0.05). */
+/** Per-child SOL allocation from CHILD_FUND_SOL env (default 0.005). */
 export function getChildFundSol(): number {
   const raw = process.env.CHILD_FUND_SOL;
   if (raw !== undefined) {

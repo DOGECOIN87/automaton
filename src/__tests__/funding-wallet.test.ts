@@ -32,7 +32,7 @@ afterEach(() => {
 describe("getChildFundSol", () => {
   it("defaults to 0.05 SOL", () => {
     expect(getChildFundSol()).toBe(DEFAULT_CHILD_FUND_SOL);
-    expect(DEFAULT_CHILD_FUND_SOL).toBe(0.05);
+    expect(DEFAULT_CHILD_FUND_SOL).toBe(0.005);
   });
 
   it("reads CHILD_FUND_SOL from env", () => {
@@ -49,8 +49,8 @@ describe("getChildFundSol", () => {
 });
 
 describe("getChildFundLamports", () => {
-  it("converts the default to 50,000,000 lamports", () => {
-    expect(getChildFundLamports()).toBe(50_000_000);
+  it("converts the default to 5,000,000 lamports", () => {
+    expect(getChildFundLamports()).toBe(5_000_000);
   });
 });
 
